@@ -1,26 +1,4 @@
---[[
-Proxy Structure:
-isDirectory
-address = ""
-lastModified
-list
-spaceTotal
-open
-remove
-rename
-read
-close
-getLabel
-seek
-size
-isReadOnly
-setLabel
-makeDirectory
-exists
-spaceUsed
-type = "filesystem"
-write
---]]
+-- WARNING: Severly untested.
 local component = require("component")
 local fs = require("filesystem")
 local io = require("io")
