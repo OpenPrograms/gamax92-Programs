@@ -1,0 +1,3 @@
+loadtape Loads a block of data into a tape drive, also setting speed
+tapefs.lua Provides a filesystem proxy that converts tape drives into files
+tapefds Searches for all tape drives and mounts them with tapefs

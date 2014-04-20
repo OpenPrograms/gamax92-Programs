@@ -1,0 +1,34 @@
+local arg = { ... }
+if #arg < 1 then
+	print("Usage: loadtape filename [speed]")
+	return
+end
+local fs = require("filesystem")
+if not fs.exists(arg[1]) then
+	error("No such file", 2)
+end
+if #arg >= 2 and tonumber(arg[2]) == nil then
+	error("Invalid speed", 2)
+end
+local filesize = fs.size(arg[1])
+local speed = tonumber(arg[2]) or 1
+local component = require("component")
+local td = component.tape_drive
+local file = fs.open(arg[1],"rb")
+local term = require("term")
+local counter = 0
+print("Rewinding tape ...")
+td.seek(-math.huge)
+while true do
+	local data = file:read(math.huge)
+	if data == nil then print("") break end
+	counter = counter + #data
+	local x,y = term.getCursor()
+	term.setCursor(1, y)
+	term.write("Loaded " .. counter .. "/" .. filesize .. " (" .. math.ceil(counter/filesize*100) .. "%) bytes")
+	td.write(data)
+end
+print("Rewinding tape ...")
+td.seek(-math.huge)
+td.setSpeed(speed)
+print("Tape speed set to " .. speed .. ", " .. speed * 32768 .. "Hz")
