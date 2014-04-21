@@ -56,15 +56,28 @@ function _fat16.readDirEntry(fatset,block,count)
 	return entry
 end
 
-function _fat16.readDirBlock(fatset, file, addr)
+function _fat16.readDirBlock(fatset, file, addr, size)
 	local list = {}
 	file:seek("set", addr)
-	local block = _fat16.readRawString(file, fatset.rdec * 32)
-	for i = 0, fatset.rdec - 1 do
+	local block = _fat16.readRawString(file, size)
+	for i = 0, (size / 32) - 1 do
 		local data = _fat16.readDirEntry(fatset,block:sub(i * 32 + 1, (i + 1) * 32),i)
 		table.insert(list, data)
 	end
 	return list
+end
+
+function _fat16.cluster2block(fatset, cluster)
+	return fatset.rb + (fatset.fatc * fatset.fatbc) + (fatset.rdec * 32 / fatset.bps) + cluster - 2
+end
+
+function _fat16.fatclusterlookup(fatset, cluster)
+	return (fatset.bps * fatset.rb) + (cluster * 2)
+end
+
+function _fat16.nextcluster2block(fatset, file, cluster)
+	file:seek("set", _fat16.fatclusterlookup(fatset, cluster))
+	return _fat16.string2number(file:read(2))
 end
 
 function fat16.proxy(fatfile)
@@ -121,20 +134,35 @@ function fat16.proxy(fatfile)
 		path = fs.canonical(path)
 		local fslist = {}
 		local file = io.open(fatfile,"rb")
-		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc)))
+		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc)), fatset.rdec * 32)
 		for i = 1,#dirlist do
 			local data = dirlist[i]
 			local fileflag = data.filename:sub(1,1)
 			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
 				table.insert(fslist, data.filename)
+				if bit32.band(data.attrib,0x10) ~= 0 then
+					print("> cluster", data.cluster)
+					local blockpos = _fat16.cluster2block(fat_settings, data.cluster)
+					print("> block", blockpos)
+					local seclist = _fat16.readDirBlock(fat_settings, file, blockpos * fat_settings.bps, fat_settings.bps)
+					for j = 1,#seclist do
+						local data2 = seclist[j]
+						local fileflag = data2.filename:sub(1,1)
+						if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data2.attrib,0x08) == 0 then
+							print(data2.filename, j)
+							print(string.format("%02X",fileflag:byte()), j)
+						end
+					end
+				end
 			end
 		end
+		file:close()
 		fslist.n = #fslist
 		return fslist
 	end
 	proxyObj.spaceTotal = function()
 	end
-	proxyObj.open = function(path,mode)
+	proxyObj.open = function(path, mode)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
