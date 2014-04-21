@@ -34,7 +34,7 @@ if not td.isReady() then
 	error("No tape present",2)
 end
 local filesize = fs.size(arg[1])
-if td.getSize() <= filesize then
+if td.getSize() < filesize then
 	print("File is too large for tape, truncating")
 	filesize = td.getSize()
 end
@@ -57,6 +57,7 @@ while true do
 	td.write(data)
 	if counter >= filesize then break end
 end
+file:close()
 print("\nRewinding tape ...")
 td.seek(-math.huge)
 td.setSpeed(speed)
