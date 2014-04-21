@@ -4,6 +4,9 @@ Loads a block of data into a tape drive, also setting speed
 formattape.lua
 Clears an entire tape back to 0x00
 
+install.lua
+Copy / to a mount point, then setup a boot script to remount /
+
 tapefs.lua
 Provides a filesystem proxy that converts tape drives into files
 Install in /lib

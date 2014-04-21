@@ -32,6 +32,7 @@ if td.getState() ~= "STOPPED" then
 	print("Stopping tape ...")
 	td.stop()
 end
+print("Rewinding tape ...")
 td.seek(-math.huge)
 while true do
 	local x,y = term.getCursor()
