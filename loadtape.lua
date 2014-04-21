@@ -41,6 +41,10 @@ end
 local file = fs.open(arg[1],"rb")
 local term = require("term")
 local counter = 0
+if td.getState() ~= "STOPPED" then
+	print("Stopping tape ...")
+	td.stop()
+end
 print("Rewinding tape ...")
 td.seek(-math.huge)
 while true do
