@@ -17,3 +17,10 @@ Install in /lib
 
 tapefsd.lua
 Searches for all tape drives and mounts them with tapefs.
+
+fat16.lua
+Provides a filesystem proxy for fat16 formatted files.
+Install in /lib
+
+fattest.lua
+Dump fat information provided by the fat16 proxy.

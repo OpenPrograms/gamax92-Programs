@@ -1,7 +1,7 @@
 local tapefs = require("tapefs")
 local fs = require("filesystem")
 local component = require("component")
-local tapes = 1
+local tapes = 0
 for k,v in component.list("tape_drive") do
 	if v == "tape_drive" then
 		tapes = tapes + 1

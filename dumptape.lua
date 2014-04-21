@@ -51,8 +51,9 @@ while true do
 	term.write("Read " .. counter .. "/" .. tapesize .. " (" .. math.ceil(counter/tapesize*100) .. "%) bytes")
 	local stat = file:write(data)
 	if stat ~= true then
-		print("")
 		file:close()
+		print("\nRewinding tape ...")
+		td.seek(-math.huge)
 		error("Failed to write to file",2)
 	end
 	if counter >= tapesize then break end

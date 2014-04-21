@@ -106,7 +106,9 @@ function tapefs.proxy(address)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "r" then
 			return nil, "bad file descriptor"
 		end
-		component.invoke(address, "seek", filedescript[fd].seek - globalseek)
+		if filedescript[fd].seek - globalseek ~= 0 then
+			component.invoke(address, "seek", filedescript[fd].seek - globalseek)
+		end
 		local data = component.invoke(address, "read", count)
 		filedescript[fd].seek = filedescript[fd].seek + #data
 		globalseek = filedescript[fd].seek
@@ -149,9 +151,7 @@ function tapefs.proxy(address)
 		elseif kind == "end" then
 			newpos = component.invoke(address, "getSize") + offset - 1
 		end
-		newpos = math.min(math.max(newpos, 0), component.invoke(address, "getSize") - 1)
-		local realseek = component.invoke(address, "seek", newpos - filedescript[fd].seek)
-		filedescript[fd].seek = filedescript[fd].seek + realseek
+		filedescript[fd].seek = math.min(math.max(newpos, 0), component.invoke(address, "getSize") - 1)
 		return filedescript[fd].seek
 	end
 	proxyObj.size = function(path)
@@ -199,7 +199,9 @@ function tapefs.proxy(address)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "w" then
 			return nil, "bad file descriptor"
 		end
-		component.invoke(address, "seek", filedescript[fd].seek - globalseek)
+		if filedescript[fd].seek - globalseek ~= 0 then
+			component.invoke(address, "seek", filedescript[fd].seek - globalseek)
+		end
 		component.invoke(address, "write", data)
 		filedescript[fd].seek = filedescript[fd].seek + #data
 		return true
