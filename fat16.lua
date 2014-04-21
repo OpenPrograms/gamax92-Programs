@@ -5,9 +5,6 @@ local io = require("io")
 local fat16 = {}
 local _fat16 = {}
 
-function _fat16.seekSector(file, sector, size)
-	file:seek("set", sector * size)
-end
 function _fat16.readRawString(file, size)
 	local str = ""
 	while #str < size do
@@ -15,14 +12,9 @@ function _fat16.readRawString(file, size)
 	end
 	return str
 end
+
 function _fat16.readWord(file)
 	return file:read(1):byte() + bit32.lshift(file:read(1):byte(),8)
-end
-function _fat16.readByte(file)
-	return file:read(1):byte()
-end
-function _fat16.readDoubleWord(file)
-	return file:read(1):byte() + bit32.lshift(file:read(1):byte(),8) + bit32.lshift(file:read(1):byte(),16) + bit32.lshift(file:read(1):byte(),24)
 end
 
 function _fat16.string2number(data)
@@ -80,6 +72,23 @@ function _fat16.nextcluster2block(fatset, file, cluster)
 	return _fat16.string2number(file:read(2))
 end
 
+function _fat16.getclusterchain(fatset, file, startcluster)
+	local cache = {[startcluster] = true}
+	local chain = {}
+	local nextcluster = startcluster
+	while true do 
+		local nextcluster = _fat16.nextcluster2block(fatset, file, nextcluster)
+		if nextcluster < 0xfff8 then
+			table.insert(chain, nextcluster)
+		end
+		if nextcluster <= 0x0002 or nextcluster >= 0xfff7 or cache[nextcluster] == true then
+			break
+		end
+		cache[nextcluster] = true
+	end
+	return chain
+end
+
 function fat16.proxy(fatfile)
 	if not fs.exists(fatfile) then
 		error("No such file.",2)
@@ -89,28 +98,27 @@ function fat16.proxy(fatfile)
 	if pos == nil then
 		error("Seeking failed: " .. err)
 	end
-	local bbs = _fat16.readWord(file)
+	local bbs = _fat16.string2number(_fat16.readRawString(file, 2))
 	if bbs ~= 0xaa55 then
 		file:close()
 		error("Bad boot block signature " .. string.format("%04X",bbs),2)
 	end
 	local fat_settings = {}
-	file:seek("set", 0x03)
-	fat_settings.omd = _fat16.readRawString(file, 8)
-	fat_settings.bps = _fat16.readWord(file)
-	fat_settings.bpau = _fat16.readByte(file)
-	fat_settings.rb = _fat16.readWord(file)
-	fat_settings.fatc = _fat16.readByte(file)
-	fat_settings.rdec = _fat16.readWord(file)
-	fat_settings.tnobw = _fat16.readWord(file)
-	file:seek("set", 0x16)
-	fat_settings.fatbc = _fat16.readWord(file)
-	file:seek("set", 0x1c)
-	fat_settings.hbc = _fat16.readDoubleWord(file)
-	fat_settings.tnobdw = _fat16.readDoubleWord(file)
-	file:seek("set", 0x27)
-	fat_settings.vsn = _fat16.readDoubleWord(file)
-	fat_settings.label = _fat16.readRawString(file, 11)
+	file:seek("set", 0)
+	local boot_block = _fat16.readRawString(file, 62)
+	fat_settings.omd = boot_block:sub(0x04, 0x0b)
+	fat_settings.bps = _fat16.string2number(boot_block:sub(0x0c, 0x0d))
+	fat_settings.bpau = _fat16.string2number(boot_block:sub(0x0e, 0x0e))
+	fat_settings.rb = _fat16.string2number(boot_block:sub(0x0f, 0x10))
+	fat_settings.fatc = _fat16.string2number(boot_block:sub(0x11, 0x11))
+	fat_settings.rdec = _fat16.string2number(boot_block:sub(0x12, 0x13))
+	fat_settings.tnobw = _fat16.string2number(boot_block:sub(0x14, 0x15))
+	fat_settings.fatbc = _fat16.string2number(boot_block:sub(0x17, 0x18))
+	fat_settings.hbc = _fat16.string2number(boot_block:sub(0x1d, 0x20))
+	fat_settings.tnobdw = _fat16.string2number(boot_block:sub(0x21, 0x24))
+	fat_settings.vsn = _fat16.string2number(boot_block:sub(0x28, 0x2B))
+	fat_settings.label = boot_block:sub(0x2c, 0x36)
+	fat_settings.ident = boot_block:sub(0x37, 0x3e)
 	file:close()
 	local proxyObj = {}
 	proxyObj.type = "filesystem"
@@ -134,10 +142,10 @@ function fat16.proxy(fatfile)
 		path = fs.canonical(path)
 		local fslist = {}
 		local file = io.open(fatfile,"rb")
-		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc)), fatset.rdec * 32)
+		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc)), fat_settings.rdec * 32)
 		for i = 1,#dirlist do
 			local data = dirlist[i]
-			local fileflag = data.filename:sub(1,1)
+			local fileflag = data.filename:sub(1,1) or 0
 			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
 				table.insert(fslist, data.filename)
 				if bit32.band(data.attrib,0x10) ~= 0 then
@@ -147,10 +155,9 @@ function fat16.proxy(fatfile)
 					local seclist = _fat16.readDirBlock(fat_settings, file, blockpos * fat_settings.bps, fat_settings.bps)
 					for j = 1,#seclist do
 						local data2 = seclist[j]
-						local fileflag = data2.filename:sub(1,1)
+						local fileflag = data2.filename:sub(1,1) or 0
 						if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data2.attrib,0x08) == 0 then
-							print(data2.filename, j)
-							print(string.format("%02X",fileflag:byte()), j)
+							print(string.format("%02X",fileflag:byte()), data2.filename, j)
 						end
 					end
 				end
