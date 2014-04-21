@@ -13,10 +13,6 @@ function _fat16.readRawString(file, size)
 	return str
 end
 
-function _fat16.readWord(file)
-	return file:read(1):byte() + bit32.lshift(file:read(1):byte(),8)
-end
-
 function _fat16.string2number(data)
 	local count = 0
 	for i = 1,#data do
@@ -60,7 +56,7 @@ function _fat16.readDirBlock(fatset, file, addr, size)
 end
 
 function _fat16.cluster2block(fatset, cluster)
-	return fatset.rb + (fatset.fatc * fatset.fatbc) + (fatset.rdec * 32 / fatset.bps) + cluster - 2
+	return fatset.rb + (fatset.fatc * fatset.fatbc) + (fatset.rdec * 32 / fatset.bps) + ((cluster - 2) * fatset.spc)
 end
 
 function _fat16.fatclusterlookup(fatset, cluster)
@@ -74,19 +70,30 @@ end
 
 function _fat16.getclusterchain(fatset, file, startcluster)
 	local cache = {[startcluster] = true}
-	local chain = {}
+	local chain = {startcluster}
 	local nextcluster = startcluster
 	while true do 
 		local nextcluster = _fat16.nextcluster2block(fatset, file, nextcluster)
-		if nextcluster < 0xfff8 then
-			table.insert(chain, nextcluster)
-		end
+		table.insert(chain, nextcluster)
 		if nextcluster <= 0x0002 or nextcluster >= 0xfff7 or cache[nextcluster] == true then
 			break
 		end
 		cache[nextcluster] = true
 	end
 	return chain
+end
+
+function _fat16.readEntireEntry(fatset, file, startcluster)
+	local list = _fat16.getclusterchain(fatset, file, startcluster)
+	if list[#list] <= 0xfff7 then
+		print("fat16: Bad cluster chain, " .. startcluster)
+	end
+	local data = ""
+	for i = 1,#list - 1 do
+		file:seek(_fat16.cluster2block(fatset, list[i]) * fatset.bps)
+		data = data .. _fat16.readRawString(file, fatset.bps)
+	end
+	return data
 end
 
 function fat16.proxy(fatfile)
@@ -108,7 +115,7 @@ function fat16.proxy(fatfile)
 	local boot_block = _fat16.readRawString(file, 62)
 	fat_settings.omd = boot_block:sub(0x04, 0x0b)
 	fat_settings.bps = _fat16.string2number(boot_block:sub(0x0c, 0x0d))
-	fat_settings.bpau = _fat16.string2number(boot_block:sub(0x0e, 0x0e))
+	fat_settings.spc = _fat16.string2number(boot_block:sub(0x0e, 0x0e))
 	fat_settings.rb = _fat16.string2number(boot_block:sub(0x0f, 0x10))
 	fat_settings.fatc = _fat16.string2number(boot_block:sub(0x11, 0x11))
 	fat_settings.rdec = _fat16.string2number(boot_block:sub(0x12, 0x13))
@@ -139,28 +146,49 @@ function fat16.proxy(fatfile)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
-		path = fs.canonical(path)
-		local fslist = {}
+		path = fs.canonical(path):lower()
+		local pathsplit = {}
+		for dir in path:gmatch("[^/]+") do
+			table.insert(pathsplit, dir)
+		end
 		local file = io.open(fatfile,"rb")
-		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc)), fat_settings.rdec * 32)
+		local blockpos = (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc))
+		local found = true
+		for i = 1,#pathsplit do
+			local dirlist
+			if i == 1 then
+				dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, fat_settings.rdec * 32)				
+			else
+				dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, fat_settings.bps)	
+			end
+			found = false
+			for j = 1, #dirlist do
+				local data = dirlist[j]
+				local fileflag = data.filename:sub(1,1) or 0
+				if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
+					if data.filename == pathsplit[i] then
+						blockpos = _fat16.cluster2block(fat_settings, data.cluster)
+						print(data.filename, data.cluster, blockpos)
+						found = true
+						break
+					end
+				end
+			end
+			if found == false then
+				break
+			end
+		end
+		if found == false then
+			return nil, "Not found" -- Correct message
+		end
+		print(blockpos)
+		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, (path == "" and fat_settings.rdec * 32 or fat_settings.bps))
+		local fslist = {}
 		for i = 1,#dirlist do
 			local data = dirlist[i]
 			local fileflag = data.filename:sub(1,1) or 0
 			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
 				table.insert(fslist, data.filename)
-				if bit32.band(data.attrib,0x10) ~= 0 then
-					print("> cluster", data.cluster)
-					local blockpos = _fat16.cluster2block(fat_settings, data.cluster)
-					print("> block", blockpos)
-					local seclist = _fat16.readDirBlock(fat_settings, file, blockpos * fat_settings.bps, fat_settings.bps)
-					for j = 1,#seclist do
-						local data2 = seclist[j]
-						local fileflag = data2.filename:sub(1,1) or 0
-						if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data2.attrib,0x08) == 0 then
-							print(string.format("%02X",fileflag:byte()), data2.filename, j)
-						end
-					end
-				end
 			end
 		end
 		file:close()
