@@ -58,19 +58,20 @@ function _msdos.validateName(name)
 	return true
 end
 
+function _msdos.spacetrim(data)
+	while true do
+		if data:sub(-1,-1) ~= " " and data:sub(-1,-1) ~= NUL then
+			break
+		end
+		data = data:sub(1,-2)
+	end
+	return data
+end
+
 function _msdos.readDirEntry(fatset,block,count)
 	local entry = {}
-	local function spacetrim(data)
-		while true do
-			if data:sub(-1,-1) ~= " " then
-				break
-			end
-			data = data:sub(1,-2)
-		end
-		return data
-	end
-	local filename = spacetrim(block:sub(1,8))
-	local ext = spacetrim(block:sub(9,11))
+	local filename = _msdos.spacetrim(block:sub(1,8))
+	local ext = _msdos.spacetrim(block:sub(9,11))
 	entry.rawfilename = filename .. (ext ~= "" and "." or "") .. ext
 	entry.filename = string.lower(entry.rawfilename)
 	entry.attrib = _msdos.string2number(block:sub(12,12))
@@ -220,7 +221,8 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		local dirlist = _msdos.readDirBlock(fatset, block)	
 		found = false
 		for _,data in ipairs(dirlist) do
-			local fileflag = data.filename:sub(1,1) or 0
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 				if data.filename == pathsplit[i] then
 					blockpos = _msdos.cluster2block(fatset, data.cluster)
@@ -256,7 +258,8 @@ function _msdos.doSomethingForFile(fatset, file, path, something)
 	end
 	local dirlist = _msdos.readDirBlock(fatset, block)
 	for index,data in ipairs(dirlist) do
-		local fileflag = data.filename:sub(1,1) or 0
+		local fileflag = data.filename:sub(1,1)
+		if fileflag == "" then fileflag = NUL end
 		if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 			if name == data.filename then
 				something(data, index)
@@ -292,8 +295,8 @@ function msdos.proxy(fatfile, fatsize)
 	fatset.fatbc = _msdos.string2number(boot_block:sub(0x17, 0x18))
 	fatset.hbc = _msdos.string2number(boot_block:sub(0x1D, 0x20))
 	fatset.vsn = _msdos.string2number(boot_block:sub(0x28, 0x2B))
-	fatset.label = boot_block:sub(0x2C, 0x36)
-	fatset.bpblabel = fatset.label
+	fatset.bpblabel = boot_block:sub(0x2C, 0x36)
+	fatset.label = _msdos.spacetrim(fatset.bpblabel)
 	fatset.ident = boot_block:sub(0x37, 0x3E)
 	local tnos = _msdos.string2number(boot_block:sub(0x14, 0x15))
 	if tnos == 0 then
@@ -396,7 +399,8 @@ function msdos.proxy(fatfile, fatsize)
 		local dirlist = _msdos.readDirBlock(fatset, block)
 		local fslist = {}
 		for _,data in ipairs(dirlist) do
-			local fileflag = data.filename:sub(1,1) or 0
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 				if bit32.band(data.attrib,0x10) ~= 0 then
 					table.insert(fslist, data.filename .. "/")
@@ -430,7 +434,7 @@ function msdos.proxy(fatfile, fatsize)
 		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
 			error("bad arguments #2 (string expected, got " .. type(mode) .. ")", 2)
 		end
-		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "b" and mode ~= "a" and mode ~= "ab" then
+		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "wb" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode",2)
 		end
 		path = fs.canonical(path):lower()
@@ -487,7 +491,8 @@ function msdos.proxy(fatfile, fatsize)
 		end
 		local dirlist = _msdos.readDirBlock(fatset, block)
 		for index,data in ipairs(dirlist) do
-			local fileflag = data.filename:sub(1,1) or 0
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename == name then
 				local chainlist = _msdos.getClusterChain(fatset, file, data.cluster)
 				local fatTable
@@ -604,6 +609,7 @@ function msdos.proxy(fatfile, fatsize)
 		return fatset.label
 	end
 	proxyObj.seek = function(fd,kind,offset)
+		-- Don't use.
 		if type(fd) ~= "number" then
 			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
 		elseif type(kind) ~= "string" then
@@ -654,12 +660,26 @@ function msdos.proxy(fatfile, fatsize)
 	proxyObj.setLabel = function(newlabel)
 		newlabel = newlabel:sub(1,11)
 		fatset.label = newlabel
+		if #newlabel < 11 then
+			newlabel = newlabel .. string.rep(" ", 11 - #newlabel)
+		end
 		fatset.bpblabel = newlabel
 		local file = io.open(fatfile,"rb")
+		file:seek("set", fatset.bps * (fatset.rb + (fatset.fatc * fatset.fatbc)))
+		local block = _msdos.readRawString(file, fatset.rdec * 32)
+		file:close()
+		local file = io.open(fatfile,"wb")
 		file:seek("set", 0x2B)
 		file:write(newlabel)
+		local dirlist = _msdos.readDirBlock(fatset, block)
+		for index,data in ipairs(dirlist) do
+			if bit32.band(data.attrib,0x08) ~= 0 then
+				file:seek("set", fatset.bps * (fatset.rb + (fatset.fatc * fatset.fatbc)) + ((index - 1) * 32))
+				file:write(newlabel)
+				break
+			end
+		end
 		file:close()
-		-- Write label to Volume entry in Root Directory
 		return newlabel
 	end
 	proxyObj.makeDirectory = function(path)
@@ -715,7 +735,8 @@ function msdos.proxy(fatfile, fatsize)
 		end
 		local dirlist = _msdos.readDirBlock(fatset, block)
 		for index,data in ipairs(dirlist) do
-			local fileflag = data.filename:sub(1,1) or 0
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
 			if fileflag == NUL or fileflag == string.char(0xE5) then
 				local curDate = os.date("*t")
 				local createT = bit32.lshift(curDate.hour, 11) + bit32.lshift(curDate.min, 5) + math.floor(curDate.sec/2)
