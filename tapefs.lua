@@ -70,7 +70,7 @@ function tapefs.proxy(address)
 		if path ~= "data.raw" or not component.invoke(address, "isReady") then
 			return nil, "file not found"
 		end
-		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "b" and mode ~= "a" and mode ~= "ab" then
+		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "wb" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode",2)
 		end
 		while true do
