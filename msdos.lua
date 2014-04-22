@@ -32,7 +32,7 @@ end
 function _msdos.number2string(data, size)
 	local str = ""
 	for i = 1, size do
-		str = str .. string.char(bit32.rshift(bit32.band(data, bit32.lshift(0xFF, (size - 1) * 8)), (size - 1) * 8))
+		str = str .. string.char(bit32.rshift(bit32.band(data, bit32.lshift(0xFF, (i - 1) * 8)), (i - 1) * 8))
 	end
 	return str
 end
@@ -104,7 +104,7 @@ function _msdos.fatclusterlookup(fatset, cluster)
 	return (fatset.bps * fatset.rb) + (cluster * 2)
 end
 
-function _msdos.getNextCluster12(fatset, fatTable, cluster)
+function _msdos.getFATEntry12(fatset, fatTable, cluster)
 	if cluster % 2 == 0 then
 		return bit32.band(_msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2)), 0x0FFF)
 	else
@@ -112,8 +112,32 @@ function _msdos.getNextCluster12(fatset, fatTable, cluster)
 	end
 end
 
-function _msdos.getNextCluster16(fatset, fatTable, cluster)
+function _msdos.getFATEntry16(fatset, fatTable, cluster)
 	return _msdos.string2number(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 2))
+end
+
+function _msdos.setFATEntry12(fatset, file, fatTable, cluster, data)
+	if cluster % 2 == 0 then
+		local fatcrap = _msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2))
+		fatcrap = _msdos.number2string(bit32.band(fatcrap,0xF000) + bit32.band(data,0x0FFF), 2)
+
+		file:seek("set", (fatset.bps * fatset.rb) + (cluster * 1.5))
+		file:write(fatcrap)
+		fatTable = fatTable:sub(1, (cluster * 1.5)) .. fatcrap .. fatTable:sub((cluster * 1.5) + 3)
+	else
+		local fatcrap = _msdos.string2number(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2))
+		fatcrap = _msdos.number2string(bit32.lshift(data,4) + bit32.band(fatcrap,0x000F), 2)
+
+		file:seek("set", (fatset.bps * fatset.rb) + math.floor(cluster * 1.5))
+		file:write(fatcrap)
+		fatTable = fatTable:sub(1, math.floor(cluster * 1.5)) .. fatcrap .. fatTable:sub(math.floor(cluster * 1.5) + 3)
+	end
+	return fatTable
+end
+
+function _msdos.setFATEntry16(fatset, file, cluster, data)
+	file:seek("set", (fatset.bps * fatset.rb) + (cluster * 2))
+	file:write(_msdos.number2string(data, 2))
 end
 
 function _msdos.getClusterChain(fatset, file, startcluster)
@@ -130,14 +154,14 @@ function _msdos.getClusterChain(fatset, file, startcluster)
 	local fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
 	while true do
 		if fatset.fatsize == 12 then
-			nextcluster = _msdos.getNextCluster12(fatset, fatTable, nextcluster)
+			nextcluster = _msdos.getFATEntry12(fatset, fatTable, nextcluster)
 		else
-			nextcluster = _msdos.getNextCluster16(fatset, fatTable, nextcluster)
+			nextcluster = _msdos.getFATEntry16(fatset, fatTable, nextcluster)
 		end
 		table.insert(chain, nextcluster)
 		if nextcluster <= 0x0002 or nextcluster >= highcluster or cache[nextcluster] == true then
 			if nextcluster <= highcluster then
-				error("msdos: Bad cluster chain, " .. startcluster)
+				print("msdos: Bad cluster chain, " .. startcluster)
 				print(table.concat(chain, ","))
 			end
 			break
@@ -153,9 +177,9 @@ function _msdos.findFreeCluster(fatset, file)
 	for i = 0, fatset.tnoc - 1 do
 		local entry
 		if fatset.fatsize == 12 then
-			entry = _msdos.getNextCluster12(fatset, fatTable, i)
+			entry = _msdos.getFATEntry12(fatset, fatTable, i)
 		else
-			entry = _msdos.getNextCluster16(fatset, fatTable, i)
+			entry = _msdos.getFATEntry16(fatset, fatTable, i)
 		end
 		if entry == 0 then
 			return i
@@ -436,7 +460,6 @@ function msdos.proxy(fatfile, fatsize)
 		end
 	end
 	proxyObj.remove = function(path)
-		-- This won't recursively remove
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
@@ -466,17 +489,32 @@ function msdos.proxy(fatfile, fatsize)
 		for index,data in ipairs(dirlist) do
 			local fileflag = data.filename:sub(1,1) or 0
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename == name then
-				file:close()
-				local file = io.open(fatfile,"ab")
+				local chainlist = _msdos.getClusterChain(fatset, file, data.cluster)
+				local fatTable
+				if fatset.fatsize == 12 then
+					file:seek("set", (fatset.bps * fatset.rb))
+					fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+				end
 				if entrycluster == nil then
+					file:close()
+					file = io.open(fatfile,"ab")
 					file:seek("set", fatset.bps * blockpos + ((index - 1) * 32))
 					file:write(string.char(0xE5))
 				else
 					local list = _msdos.getClusterChain(fatset, file, entrycluster)
-					local clusterList = (index - 1) / (fatset.bps * fatset.spc / 32)
+					local clusterList = math.floor((index - 1) / (fatset.bps * fatset.spc / 32))
 					local clusterPos = (index - 1) % (fatset.bps * fatset.spc / 32)
+					file:close()
+					file = io.open(fatfile,"ab")
 					file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
 					file:write(string.char(0xE5))
+				end
+				for i = 1, #chainlist - 1 do
+					if fatset.fatsize == 12 then
+						fatTable = _msdos.setFATEntry12(fatset, file, fatTable, chainlist[i], 0x0000)
+					else
+						_msdos.setFATEntry16(fatset, file, chainlist[i], 0x0000)
+					end
 				end
 				file:close()
 				return true
@@ -681,17 +719,29 @@ function msdos.proxy(fatfile, fatsize)
 					print("msdos: WARNING: Current year before 1980, year will be invalid")
 				end
 				local entry = filename .. ext .. string.char(0x30) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. _msdos.number2string(freeCluster, 2) .. string.rep(NUL, 4)
-				file:close()
-				local file = io.open(fatfile,"ab")
+				local fatTable
+				if fatset.fatsize == 12 then
+					file:seek("set", (fatset.bps * fatset.rb))
+					fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+				end
 				if entrycluster == nil then
+					file:close()
+					file = io.open(fatfile,"ab")
 					file:seek("set", fatset.bps * blockpos + ((index - 1) * 32))
 					file:write(entry)
 				else
 					local list = _msdos.getClusterChain(fatset, file, entrycluster)
-					local clusterList = (index - 1) / (fatset.bps * fatset.spc / 32)
+					local clusterList = math.floor((index - 1) / (fatset.bps * fatset.spc / 32))
 					local clusterPos = (index - 1) % (fatset.bps * fatset.spc / 32)
+					file:close()
+					file = io.open(fatfile,"ab")
 					file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
 					file:write(entry)
+				end
+				if fatset.fatsize == 12 then
+					_msdos.setFATEntry12(fatset, file, fatTable, freeCluster, 0x0FFF)
+				else
+					_msdos.setFATEntry16(fatset, file, freeCluster, 0xFFFF)
 				end
 				file:close()
 				return true
@@ -708,9 +758,9 @@ function msdos.proxy(fatfile, fatsize)
 		for i = 0, fatset.tnoc - 1 do
 			local entry
 			if fatset.fatsize == 12 then
-				entry = _msdos.getNextCluster12(fatset, fatTable, i)
+				entry = _msdos.getFATEntry12(fatset, fatTable, i)
 			else
-				entry = _msdos.getNextCluster16(fatset, fatTable, i)
+				entry = _msdos.getFATEntry16(fatset, fatTable, i)
 			end
 			if entry ~= 0 then
 				count = count + (fatset.spc * fatset.bps)
