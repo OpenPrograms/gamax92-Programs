@@ -50,7 +50,7 @@ function _msdos.readDirEntry(fatset,block,count)
 	elseif fatset.fatsize == 16 then
 		cluster = _msdos.string2number(block:sub(27,28))
 	else
-		cluster = bit32.lshift(_msdos.string2number(block:sub(20,21)), 16) + _msdos.string2number(block:sub(27,28))
+		cluster = bit32.band(bit32.lshift(_msdos.string2number(block:sub(20,21)), 16) + _msdos.string2number(block:sub(27,28)), 0x0FFFFFFF)
 	end
 	entry.cluster = cluster
 	entry.size = _msdos.string2number(block:sub(29,32))
@@ -74,24 +74,20 @@ function _msdos.fatclusterlookup(fatset, cluster)
 	return (fatset.bps * fatset.rb) + (cluster * 2)
 end
 
-function _msdos.getNextCluster12(fatset, file, cluster)
+function _msdos.getNextCluster12(fatset, fatTable, cluster)
 	if cluster % 2 == 0 then
-		file:seek("set", (fatset.bps * fatset.rb) + (cluster * 1.5))
-		return bit32.band(_msdos.string2number(file:read(2)), 0x0FFF)
+		return bit32.band(_msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2)), 0x0FFF)
 	else
-		file:seek("set", (fatset.bps * fatset.rb) + math.floor(cluster * 1.5))
-		return bit32.rshift(_msdos.string2number(file:read(2)), 4)
+		return bit32.rshift(_msdos.string2number(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2)), 4)
 	end
 end
 
-function _msdos.getNextCluster16(fatset, file, cluster)
-	file:seek("set", (fatset.bps * fatset.rb) + (cluster * 2))
-	return _msdos.string2number(file:read(2))
+function _msdos.getNextCluster16(fatset, fatTable, cluster)
+	return _msdos.string2number(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 2))
 end
 
-function _msdos.getNextCluster32(fatset, file, cluster)
-	file:seek("set", (fatset.bps * fatset.rb) + (cluster * 4))
-	return bit32.band(_msdos.string2number(file:read(4)), 0x0FFFFFFF)
+function _msdos.getNextCluster32(fatset, fatTable, cluster)
+	return bit32.band(_msdos.string2number(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 4)), 0x0FFFFFFF)
 end
 
 function _msdos.getClusterChain(fatset, file, startcluster)
@@ -106,13 +102,15 @@ function _msdos.getClusterChain(fatset, file, startcluster)
 	else
 		highcluster = 0x0FFFFFF7
 	end
+	file:seek("set", (fatset.bps * fatset.rb))
+	local fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
 	while true do
 		if fatset.fatsize == 12 then
-			nextcluster = _msdos.getNextCluster12(fatset, file, nextcluster)
+			nextcluster = _msdos.getNextCluster12(fatset, fatTable, nextcluster)
 		elseif fatset.fatsize == 16 then
-			nextcluster = _msdos.getNextCluster16(fatset, file, nextcluster)
+			nextcluster = _msdos.getNextCluster16(fatset, fatTable, nextcluster)
 		else
-			nextcluster = _msdos.getNextCluster32(fatset, file, nextcluster)
+			nextcluster = _msdos.getNextCluster32(fatset, fatTable, nextcluster)
 		end
 		table.insert(chain, nextcluster)
 		if nextcluster <= 0x0002 or nextcluster >= highcluster or cache[nextcluster] == true then
@@ -347,6 +345,7 @@ function msdos.proxy(fatfile, fatsize)
 		return fslist
 	end
 	proxyObj.spaceTotal = function()
+		return fatset.tnoc * fatset.spc * fatset.bps
 	end
 	proxyObj.exists = function(path)
 		if type(path) ~= "string" then
@@ -506,6 +505,10 @@ function msdos.proxy(fatfile, fatsize)
 		return false
 	end
 	proxyObj.setLabel = function(newlabel)
+		newlabel = newlabel:sub(1,11)
+		fatset.label = newlabel
+		-- Write label to BPB and Volume entry in Root Directory
+		return newlabel
 	end
 	proxyObj.makeDirectory = function(path)
 		if type(path) ~= "string" then
@@ -513,6 +516,25 @@ function msdos.proxy(fatfile, fatsize)
 		end
 	end
 	proxyObj.spaceUsed = function()
+		local count = 0
+		local file = io.open(fatfile,"rb")
+		file:seek("set", (fatset.bps * fatset.rb))
+		local fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+		for i = 0, fatset.tnoc - 1 do
+			local entry
+			if fatset.fatsize == 12 then
+				entry = _msdos.getNextCluster12(fatset, fatTable, i)
+			elseif fatset.fatsize == 16 then
+				entry = _msdos.getNextCluster16(fatset, fatTable, i)
+			else
+				entry = _msdos.getNextCluster32(fatset, fatTable, i)
+			end
+			if entry ~= 0 then
+				count = count + (fatset.spc * fatset.bps)
+			end
+		end
+		file:close()
+		return count
 	end
 	proxyObj.write = function(fd,data)
 		if type(fd) ~= "number" then
