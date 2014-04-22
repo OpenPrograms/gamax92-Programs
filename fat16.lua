@@ -2,6 +2,8 @@
 local fs = require("filesystem")
 local io = require("io")
 
+local filedescript = {}
+
 local fat16 = {}
 local _fat16 = {}
 
@@ -34,7 +36,8 @@ function _fat16.readDirEntry(fatset,block,count)
 	end
 	local filename = spacetrim(block:sub(1,8))
 	local ext = spacetrim(block:sub(9,11))
-	entry.filename = string.lower(filename .. (ext ~= "" and "." or "") .. ext)
+	entry.rawfilename = filename .. (ext ~= "" and "." or "") .. ext
+	entry.filename = string.lower(entry.rawfilename)
 	entry.attrib = _fat16.string2number(block:sub(12,12))
 	entry.reserved = _fat16.string2number(block:sub(13,22))
 	entry.modifyT = _fat16.string2number(block:sub(23,24))
@@ -58,7 +61,7 @@ function _fat16.cluster2block(fatset, cluster)
 end
 
 function _fat16.fatclusterlookup(fatset, cluster)
-	return (fatset.bps * fatset.rb) + (cluster * 2)
+	return (fatset.bps * fatset.rb) + ((cluster - 2) * 2)
 end
 
 function _fat16.nextcluster2block(fatset, file, cluster)
@@ -66,7 +69,7 @@ function _fat16.nextcluster2block(fatset, file, cluster)
 	return _fat16.string2number(file:read(2))
 end
 
-function _fat16.getclusterchain(fatset, file, startcluster)
+function _fat16.getClusterChain(fatset, file, startcluster)
 	local cache = {[startcluster] = true}
 	local chain = {startcluster}
 	local nextcluster = startcluster
@@ -74,6 +77,9 @@ function _fat16.getclusterchain(fatset, file, startcluster)
 		local nextcluster = _fat16.nextcluster2block(fatset, file, nextcluster)
 		table.insert(chain, nextcluster)
 		if nextcluster <= 0x0002 or nextcluster >= 0xfff7 or cache[nextcluster] == true then
+			if nextcluster <= 0xfff7 then
+				print("fat16: Bad cluster chain, " .. startcluster)
+			end
 			break
 		end
 		cache[nextcluster] = true
@@ -82,10 +88,7 @@ function _fat16.getclusterchain(fatset, file, startcluster)
 end
 
 function _fat16.readEntireEntry(fatset, file, startcluster)
-	local list = _fat16.getclusterchain(fatset, file, startcluster)
-	if list[#list] <= 0xfff7 then
-		print("fat16: Bad cluster chain, " .. startcluster)
-	end
+	local list = _fat16.getClusterChain(fatset, file, startcluster)
 	local data = ""
 	for i = 1,#list - 1 do
 		file:seek("set", _fat16.cluster2block(fatset, list[i]) * fatset.bps)
@@ -97,6 +100,9 @@ end
 function _fat16.searchDirectoryLists(fatset, file, path)
 	local pathsplit = {}
 	for dir in path:gmatch("[^/]+") do
+		if #dir > 12 then
+			return false
+		end
 		table.insert(pathsplit, dir)
 	end
 	local blockpos = (fatset.rb + (fatset.fatc * fatset.fatbc))
@@ -166,14 +172,14 @@ function fat16.proxy(fatfile)
 		error("No such file.",2)
 	end
 	local file = io.open(fatfile,"rb")
-	local pos, err = file:seek("set",0x1fe)
+	local pos, err = file:seek("set", 0x36)
 	if pos == nil then
 		error("Seeking failed: " .. err)
 	end
-	local bbs = _fat16.string2number(_fat16.readRawString(file, 2))
-	if bbs ~= 0xaa55 then
+	local bbs = _fat16.readRawString(file, 8)
+	if bbs:sub(1,5) ~= "FAT16" then
 		file:close()
-		error("Bad boot block signature " .. string.format("%04X",bbs),2)
+		error("Not a valid FAT16 filesystem, " .. bbs, 2)
 	end
 	local fatset = {}
 	file:seek("set", 0)
@@ -191,7 +197,16 @@ function fat16.proxy(fatfile)
 	fatset.vsn = _fat16.string2number(boot_block:sub(0x28, 0x2B))
 	fatset.label = boot_block:sub(0x2c, 0x36)
 	fatset.ident = boot_block:sub(0x37, 0x3e)
+	file:seek("set", fatset.bps * (fatset.rb + (fatset.fatc * fatset.fatbc)))
+	local block = _fat16.readRawString(file, fatset.rdec * 32)
 	file:close()
+	local dirlist = _fat16.readDirBlock(fatset, block)
+	for _,data in ipairs(dirlist) do
+		if bit32.band(data.attrib,0x08) ~= 0 then
+			fatset.label = data.rawfilename
+			break
+		end
+	end
 	local proxyObj = {}
 	proxyObj.type = "filesystem"
 	proxyObj.address = string.format("%08X",fatset.vsn) -- FAT Serial Number
@@ -204,11 +219,8 @@ function fat16.proxy(fatfile)
 			return true
 		end
 		local isDirectory
-		local function something(data)
-			isDirectory = bit32.band(data.attrib,0x10) ~= 0
-		end
 		local file = io.open(fatfile,"rb")
-		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		local found = _fat16.doSomethingForFile(fatset, file, path, function(data) isDirectory = bit32.band(data.attrib,0x10) ~= 0 end)
 		file:close()
 		if not found then
 			return nil, "no such file or directory"
@@ -225,11 +237,8 @@ function fat16.proxy(fatfile)
 			return 0
 		end
 		local modifyT, modifyD
-		local function something(data)
-			modifyT, modifyD = data.modifyT, data.modifyD
-		end
 		local file = io.open(fatfile,"rb")
-		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		local found = _fat16.doSomethingForFile(fatset, file, path, function(data) modifyT, modifyD = data.modifyT, data.modifyD end)
 		file:close()
 		if not found then
 			return 0
@@ -297,11 +306,19 @@ function fat16.proxy(fatfile)
 		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
 			error("bad arguments #2 (string expected, got " .. type(mode) .. ")", 2)
 		end
-		if proxyObj.exists(path) then
-			return nil, "file not found"
-		end
 		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "b" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode",2)
+		end
+		path = fs.canonical(path):lower()
+		if path == "" then
+			return nil
+		end
+		local filecluster, filesize
+		local file = io.open(fatfile,"rb")
+		local found = _fat16.doSomethingForFile(fatset, file, path, function(data) filecluster, filesize = data.cluster, data.size end)
+		if not found then
+			file:close()
+			return nil, "file not found"
 		end
 		while true do
 			local rnddescrpt = math.random(1000000000,9999999999)
@@ -310,8 +327,10 @@ function fat16.proxy(fatfile)
 					seek = 0,
 					mode = mode:sub(1,1) == "r" and "r" or "w",
 					buffer = "",
-					cluster = nil -- First cluster needed for cluster chain needed for buffer
+					chain = _fat16.getClusterChain(fatset, file, filecluster),
+					size = filesize
 				}
+				file:close()
 				return rnddescrpt
 			end
 		end
@@ -338,6 +357,32 @@ function fat16.proxy(fatfile)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "r" then
 			return nil, "bad file descriptor"
 		end
+		if #filedescript[fd].buffer >= filedescript[fd].size and filedescript[fd].seek > filedescript[fd].size then
+			return nil
+		end
+		count = math.min(count,8192)
+		if filedescript[fd].seek + count > filedescript[fd].size then
+			count = filedescript[fd].size - filedescript[fd].seek
+		end
+		if count == 0 then
+			return nil
+		end
+		while #filedescript[fd].buffer < filedescript[fd].seek + count do
+			local nextchain = (#filedescript[fd].buffer / fatset.bps / fatset.spc) + 1
+			if filedescript[fd].chain[nextchain] == nil then
+				return nil
+			end
+			local block = _fat16.cluster2block(fatset, filedescript[fd].chain[nextchain])
+			local file = io.open(fatfile,"rb")
+			file:seek("set", block * fatset.bps)
+			local data = _fat16.readRawString(file, fatset.bps * fatset.spc)
+			file:close()
+			filedescript[fd].buffer = filedescript[fd].buffer .. data
+		end
+		filedescript[fd].buffer = filedescript[fd].buffer:sub(1,filedescript[fd].size)
+		local data = filedescript[fd].buffer:sub(filedescript[fd].seek + 1, filedescript[fd].seek + count)
+		filedescript[fd].seek = filedescript[fd].seek + #data
+		return data
 	end
 	proxyObj.close = function(fd)
 		if type(fd) ~= "number" then
@@ -383,9 +428,21 @@ function fat16.proxy(fatfile)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
-		path = fs.canonical(path)
+		path = fs.canonical(path):lower()
+		if path == "" then
+			return 0
+		end
+		local filesize
+		local file = io.open(fatfile,"rb")
+		local found = _fat16.doSomethingForFile(fatset, file, path, function(data) filesize = data.size end)
+		file:close()
+		if not found then
+			return 0
+		end
+		return filesize
 	end
 	proxyObj.isReadOnly = function()
+		return false
 	end
 	proxyObj.setLabel = function(newlabel)
 	end
