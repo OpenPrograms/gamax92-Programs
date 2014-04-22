@@ -509,12 +509,17 @@ function msdos.proxy(fatfile, fatsize)
 					file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
 					file:write(string.char(0xE5))
 				end
+				local fakefile = {seek = function() end, write = function() end}
 				for i = 1, #chainlist - 1 do
 					if fatset.fatsize == 12 then
-						fatTable = _msdos.setFATEntry12(fatset, file, fatTable, chainlist[i], 0x0000)
+						fatTable = _msdos.setFATEntry12(fatset, fakefile, fatTable, chainlist[i], 0x0000)
 					else
 						_msdos.setFATEntry16(fatset, file, chainlist[i], 0x0000)
 					end
+				end
+				if fatset.fatsize == 12 then
+					file:seek("set", (fatset.bps * fatset.rb))
+					file:write(fatTable)
 				end
 				file:close()
 				return true
@@ -714,8 +719,8 @@ function msdos.proxy(fatfile, fatsize)
 			if fileflag == NUL or fileflag == string.char(0xE5) then
 				local curDate = os.date("*t")
 				local createT = bit32.lshift(curDate.hour, 11) + bit32.lshift(curDate.min, 5) + math.floor(curDate.sec/2)
-				local createD = bit32.lshift(math.max(curDate.year - 1970,0), 9) + bit32.lshift(curDate.month, 5) + curDate.day
-				if curDate.year - 1970 < 0 then
+				local createD = bit32.lshift(math.max(curDate.year - 1980,0), 9) + bit32.lshift(curDate.month, 5) + curDate.day
+				if curDate.year - 1980 < 0 then
 					print("msdos: WARNING: Current year before 1980, year will be invalid")
 				end
 				local entry = filename .. ext .. string.char(0x30) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. _msdos.number2string(freeCluster, 2) .. string.rep(NUL, 4)
