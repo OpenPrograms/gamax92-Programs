@@ -44,12 +44,10 @@ function _fat16.readDirEntry(fatset,block,count)
 	return entry
 end
 
-function _fat16.readDirBlock(fatset, file, addr, size)
+function _fat16.readDirBlock(fatset, block)
 	local list = {}
-	file:seek("set", addr)
-	local block = _fat16.readRawString(file, size)
-	for i = 0, (size / 32) - 1 do
-		local data = _fat16.readDirEntry(fatset,block:sub(i * 32 + 1, (i + 1) * 32),i)
+	for i = 0, (#block / 32) - 1 do
+		local data = _fat16.readDirEntry(fatset, block:sub(i * 32 + 1, (i + 1) * 32),i)
 		table.insert(list, data)
 	end
 	return list
@@ -90,10 +88,74 @@ function _fat16.readEntireEntry(fatset, file, startcluster)
 	end
 	local data = ""
 	for i = 1,#list - 1 do
-		file:seek(_fat16.cluster2block(fatset, list[i]) * fatset.bps)
-		data = data .. _fat16.readRawString(file, fatset.bps)
+		file:seek("set", _fat16.cluster2block(fatset, list[i]) * fatset.bps)
+		data = data .. _fat16.readRawString(file, fatset.bps * fatset.spc)
 	end
 	return data
+end
+
+function _fat16.searchDirectoryLists(fatset, file, path)
+	local pathsplit = {}
+	for dir in path:gmatch("[^/]+") do
+		table.insert(pathsplit, dir)
+	end
+	local blockpos = (fatset.rb + (fatset.fatc * fatset.fatbc))
+	local entrycluster
+	local found = true
+	for i = 1,#pathsplit do
+		local block
+		file:seek("set", fatset.bps * blockpos)
+		if i == 1 then
+			file:seek("set", fatset.bps * blockpos)
+			block = _fat16.readRawString(file, fatset.rdec * 32)				
+		else
+			block = _fat16.readEntireEntry(fatset, file, entrycluster)
+		end
+		local dirlist = _fat16.readDirBlock(fatset, block)	
+		found = false
+		for _,data in ipairs(dirlist) do
+			local fileflag = data.filename:sub(1,1) or 0
+			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
+				if data.filename == pathsplit[i] then
+					blockpos = _fat16.cluster2block(fatset, data.cluster)
+					entrycluster = data.cluster
+					found = true
+					break
+				end
+			end
+		end
+		if found == false then
+			break
+		end
+	end
+	return found, blockpos, entrycluster
+end
+
+function _fat16.doSomethingForFile(fatset, file, path, something)
+	local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+	path = fs.canonical(path .. "/..")
+	found, blockpos, entrycluster = _fat16.searchDirectoryLists(fatset, file, path)
+	if found == false then
+		return false
+	end
+	file:seek("set", fatset.bps * blockpos)
+	local block
+	if entrycluster == nil then
+		block = _fat16.readRawString(file, fatset.rdec * 32)
+	else
+		block = _fat16.readEntireEntry(fatset, file, entrycluster)
+	end
+	local dirlist = _fat16.readDirBlock(fatset, block)
+	for _,data in ipairs(dirlist) do
+		local fileflag = data.filename:sub(1,1) or 0
+		if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
+			if name == data.filename then
+				something(data)
+				return true
+			end
+		end
+	end
+	return false
 end
 
 function fat16.proxy(fatfile)
@@ -110,85 +172,99 @@ function fat16.proxy(fatfile)
 		file:close()
 		error("Bad boot block signature " .. string.format("%04X",bbs),2)
 	end
-	local fat_settings = {}
+	local fatset = {}
 	file:seek("set", 0)
 	local boot_block = _fat16.readRawString(file, 62)
-	fat_settings.omd = boot_block:sub(0x04, 0x0b)
-	fat_settings.bps = _fat16.string2number(boot_block:sub(0x0c, 0x0d))
-	fat_settings.spc = _fat16.string2number(boot_block:sub(0x0e, 0x0e))
-	fat_settings.rb = _fat16.string2number(boot_block:sub(0x0f, 0x10))
-	fat_settings.fatc = _fat16.string2number(boot_block:sub(0x11, 0x11))
-	fat_settings.rdec = _fat16.string2number(boot_block:sub(0x12, 0x13))
-	fat_settings.tnobw = _fat16.string2number(boot_block:sub(0x14, 0x15))
-	fat_settings.fatbc = _fat16.string2number(boot_block:sub(0x17, 0x18))
-	fat_settings.hbc = _fat16.string2number(boot_block:sub(0x1d, 0x20))
-	fat_settings.tnobdw = _fat16.string2number(boot_block:sub(0x21, 0x24))
-	fat_settings.vsn = _fat16.string2number(boot_block:sub(0x28, 0x2B))
-	fat_settings.label = boot_block:sub(0x2c, 0x36)
-	fat_settings.ident = boot_block:sub(0x37, 0x3e)
+	fatset.omd = boot_block:sub(0x04, 0x0b)
+	fatset.bps = _fat16.string2number(boot_block:sub(0x0c, 0x0d))
+	fatset.spc = _fat16.string2number(boot_block:sub(0x0e, 0x0e))
+	fatset.rb = _fat16.string2number(boot_block:sub(0x0f, 0x10))
+	fatset.fatc = _fat16.string2number(boot_block:sub(0x11, 0x11))
+	fatset.rdec = _fat16.string2number(boot_block:sub(0x12, 0x13))
+	fatset.tnobw = _fat16.string2number(boot_block:sub(0x14, 0x15))
+	fatset.fatbc = _fat16.string2number(boot_block:sub(0x17, 0x18))
+	fatset.hbc = _fat16.string2number(boot_block:sub(0x1d, 0x20))
+	fatset.tnobdw = _fat16.string2number(boot_block:sub(0x21, 0x24))
+	fatset.vsn = _fat16.string2number(boot_block:sub(0x28, 0x2B))
+	fatset.label = boot_block:sub(0x2c, 0x36)
+	fatset.ident = boot_block:sub(0x37, 0x3e)
 	file:close()
 	local proxyObj = {}
 	proxyObj.type = "filesystem"
-	proxyObj.address = string.format("%08X",fat_settings.vsn) -- FAT Serial Number
+	proxyObj.address = string.format("%08X",fatset.vsn) -- FAT Serial Number
 	proxyObj.isDirectory = function(path)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
-		path = fs.canonical(path)
-		return nil, "file not found"
+		path = fs.canonical(path):lower()
+		if path == "" then
+			return true
+		end
+		local file = io.open(fatfile,"rb")
+		local isDirectory
+		local function something(data)
+			isDirectory = bit32.band(data.attrib,0x10) ~= 0
+		end
+		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		if not found then
+			return nil, "no such file or directory"
+		end
+		return isDirectory
 	end
 	proxyObj.lastModified = function(path)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
+		path = fs.canonical(path):lower()
+		if path == "" then
+			-- No modification date for root directory
+			return 0
+		end
+		local file = io.open(fatfile,"rb")
+		local modifyT, modifyD
+		local function something(data)
+			modifyT, modifyD = data.modifyT, data.modifyD
+		end
+		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		if not found then
+			return 0
+		end
+		local year = bit32.rshift(bit32.band(modifyD, 0xFE00), 9) + 10
+		local month = bit32.rshift(bit32.band(modifyD, 0x1E0), 5)
+		local day = bit32.band(modifyD, 0x001F) 
+		local hour = bit32.rshift(bit32.band(modifyT, 0xF800), 11)
+		local min = bit32.rshift(bit32.band(modifyT, 0x07E0), 5)
+		local sec = bit32.band(modifyT, 0x001F) * 2
+		local modification = year * 31556940 + month * 2629746 + day * 86400 + hour * 3600 + min * 60 + sec
+		return modification
 	end
 	proxyObj.list = function(path)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
 		path = fs.canonical(path):lower()
-		local pathsplit = {}
-		for dir in path:gmatch("[^/]+") do
-			table.insert(pathsplit, dir)
-		end
 		local file = io.open(fatfile,"rb")
-		local blockpos = (fat_settings.rb + (fat_settings.fatc * fat_settings.fatbc))
-		local found = true
-		for i = 1,#pathsplit do
-			local dirlist
-			if i == 1 then
-				dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, fat_settings.rdec * 32)				
-			else
-				dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, fat_settings.bps)	
-			end
-			found = false
-			for j = 1, #dirlist do
-				local data = dirlist[j]
-				local fileflag = data.filename:sub(1,1) or 0
-				if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
-					if data.filename == pathsplit[i] then
-						blockpos = _fat16.cluster2block(fat_settings, data.cluster)
-						print(data.filename, data.cluster, blockpos)
-						found = true
-						break
-					end
-				end
-			end
-			if found == false then
-				break
-			end
-		end
+		found, blockpos, entrycluster = _fat16.searchDirectoryLists(fatset, file, path)
 		if found == false then
-			return nil, "Not found" -- Correct message
+			return nil, "no such file or directory"
 		end
-		print(blockpos)
-		local dirlist = _fat16.readDirBlock(fat_settings, file, fat_settings.bps * blockpos, (path == "" and fat_settings.rdec * 32 or fat_settings.bps))
+		file:seek("set", fatset.bps * blockpos)
+		local block
+		if entrycluster == nil then
+			block = _fat16.readRawString(file, fatset.rdec * 32)
+		else
+			block = _fat16.readEntireEntry(fatset, file, entrycluster)
+		end
+		local dirlist = _fat16.readDirBlock(fatset, block)
 		local fslist = {}
-		for i = 1,#dirlist do
-			local data = dirlist[i]
+		for _,data in ipairs(dirlist) do
 			local fileflag = data.filename:sub(1,1) or 0
-			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
-				table.insert(fslist, data.filename)
+			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
+				if bit32.band(data.attrib,0x10) ~= 0 then
+					table.insert(fslist, data.filename .. "/")
+				else
+					table.insert(fslist, data.filename)
+				end
 			end
 		end
 		file:close()
@@ -214,7 +290,8 @@ function fat16.proxy(fatfile)
 			if filedescript[rnddescrpt] == nil then
 				filedescript[rnddescrpt] = {
 					seek = 0,
-					mode = mode:sub(1,1) == "r" and "r" or "w"
+					mode = mode:sub(1,1) == "r" and "r" or "w",
+					buffer = ""
 				}
 				return rnddescrpt
 			end
@@ -253,7 +330,7 @@ function fat16.proxy(fatfile)
 		filedescript[fd] = nil
 	end
 	proxyObj.getLabel = function()
-		return fat_settings.label
+		return fatset.label
 	end
 	proxyObj.seek = function(fd,kind,offset)
 		if type(fd) ~= "number" then
@@ -302,7 +379,34 @@ function fat16.proxy(fatfile)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
-		path = fs.canonical(path)
+		path = fs.canonical(path):lower()
+		if path == "" then
+			return true
+		end
+		local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+		path = fs.canonical(path .. "/..")
+		local file = io.open(fatfile,"rb")
+		found, blockpos, entrycluster = _fat16.searchDirectoryLists(fatset, file, path)
+		if found == false then
+			return false
+		end
+		file:seek("set", fatset.bps * blockpos)
+		local block
+		if entrycluster == nil then
+			block = _fat16.readRawString(file, fatset.rdec * 32)
+		else
+			block = _fat16.readEntireEntry(fatset, file, entrycluster)
+		end
+		local dirlist = _fat16.readDirBlock(fatset, block)
+		for _,data in ipairs(dirlist) do
+			local fileflag = data.filename:sub(1,1) or 0
+			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
+				if name == data.filename then
+					return true
+				end
+			end
+		end
+		return false
 	end
 	proxyObj.spaceUsed = function()
 	end
@@ -316,7 +420,7 @@ function fat16.proxy(fatfile)
 			return nil, "bad file descriptor"
 		end
 	end
-	proxyObj.fat = fat_settings
+	proxyObj.fat = fatset
 	return proxyObj
 end
 return fat16

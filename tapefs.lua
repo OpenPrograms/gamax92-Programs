@@ -17,7 +17,6 @@ function tapefs.proxy(address)
 	if not found then
 		error("No such component",2)
 	end
-	local globalseek = 0
 	local label
 	component.invoke(address, "seek", -math.huge)
 	local proxyObj = {}
@@ -33,7 +32,7 @@ function tapefs.proxy(address)
 		elseif path == "data.raw" and component.invoke(address, "isReady") then
 			return false
 		else
-			return nil, "file not found"
+			return nil, "no such file or directory"
 		end
 	end
 	proxyObj.lastModified = function(path)
@@ -48,6 +47,9 @@ function tapefs.proxy(address)
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
 		path = fs.canonical(path)
+		if path ~= "" then
+			return nil, "no such file or directory"
+		end
 		local list = {}
 		if path == "" and component.invoke(address, "isReady") then
 			table.insert(list, "data.raw")
@@ -106,12 +108,12 @@ function tapefs.proxy(address)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "r" then
 			return nil, "bad file descriptor"
 		end
-		if filedescript[fd].seek - globalseek ~= 0 then
-			component.invoke(address, "seek", filedescript[fd].seek - globalseek)
-		end
+
+		component.invoke(address, "seek", -math.huge)
+		component.invoke(address, "seek", filedescript[fd].seek)
+
 		local data = component.invoke(address, "read", count)
 		filedescript[fd].seek = filedescript[fd].seek + #data
-		globalseek = filedescript[fd].seek
 		return data
 	end
 	proxyObj.close = function(fd)
@@ -199,9 +201,10 @@ function tapefs.proxy(address)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "w" then
 			return nil, "bad file descriptor"
 		end
-		if filedescript[fd].seek - globalseek ~= 0 then
-			component.invoke(address, "seek", filedescript[fd].seek - globalseek)
-		end
+
+		component.invoke(address, "seek", -math.huge)
+		component.invoke(address, "seek", filedescript[fd].seek)
+
 		component.invoke(address, "write", data)
 		filedescript[fd].seek = filedescript[fd].seek + #data
 		return true
