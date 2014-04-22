@@ -118,6 +118,9 @@ function _msdos.getFATEntry16(fatset, fatTable, cluster)
 end
 
 function _msdos.setFATEntry12(fatset, file, fatTable, cluster, data)
+	if cluster < 2 then
+		error("Attempted to modify cluster " .. cluster .. "\n" .. debug.traceback())
+	end
 	if cluster % 2 == 0 then
 		local fatcrap = _msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2))
 		fatcrap = _msdos.number2string(bit32.band(fatcrap,0xF000) + bit32.band(data,0x0FFF), 2)
@@ -141,6 +144,9 @@ function _msdos.setFATEntry12(fatset, file, fatTable, cluster, data)
 end
 
 function _msdos.setFATEntry16(fatset, file, fatTable, cluster, data)
+	if cluster < 2 then
+		error("Attempted to modify cluster " .. cluster .. "\n" .. debug.traceback())
+	end
 	local fatcrap = _msdos.number2string(data, 2)
 	for i = 0,fatset.fatc - 1 do
 		file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc) + (cluster * 2))
@@ -789,6 +795,11 @@ function msdos.proxy(fatfile, fatsize)
 					print("msdos: WARNING: Current year before 1980, year will be invalid")
 				end
 				local entry = filename .. ext .. string.char(0x30) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. _msdos.number2string(freeCluster, 2) .. string.rep(NUL, 4)
+				local fatTable
+				if fatset.fatsize == 12 then
+					file:seek("set", (fatset.bps * fatset.rb))
+					fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+				end
 				if entrycluster == nil then
 					file:close()
 					file = io.open(fatfile,"ab")
@@ -806,7 +817,7 @@ function msdos.proxy(fatfile, fatsize)
 				file:seek("set", _msdos.cluster2block(fatset, freeCluster) * fatset.bps)
 				file:write(string.rep(NUL, fatset.bps * fatset.spc))
 				if fatset.fatsize == 12 then
-					_msdos.setFATEntry12(fatset, file, "", freeCluster, 0x0FFF)
+					_msdos.setFATEntry12(fatset, file, fatTable, freeCluster, 0x0FFF)
 				else
 					_msdos.setFATEntry16(fatset, file, "", freeCluster, 0xFFFF)
 				end
