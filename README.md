@@ -29,11 +29,11 @@ Install in /lib
 
 Searches for all tape drives and mounts them with tapefs.
 
-#### fat16.lua
+#### msdos.lua
 
-Provides a filesystem proxy for fat16 formatted files.
+Provides a filesystem proxy for FAT formatted files.
 Install in /lib
 
 #### fattest.lua
 
-Dump fat information provided by the fat16 proxy.
+Dump fat information provided by the msdos proxy.
