@@ -61,7 +61,7 @@ function _fat16.cluster2block(fatset, cluster)
 end
 
 function _fat16.fatclusterlookup(fatset, cluster)
-	return (fatset.bps * fatset.rb) + ((cluster - 2) * 2)
+	return (fatset.bps * fatset.rb) + (cluster * 2)
 end
 
 function _fat16.nextcluster2block(fatset, file, cluster)
@@ -74,11 +74,12 @@ function _fat16.getClusterChain(fatset, file, startcluster)
 	local chain = {startcluster}
 	local nextcluster = startcluster
 	while true do 
-		local nextcluster = _fat16.nextcluster2block(fatset, file, nextcluster)
+		nextcluster = _fat16.nextcluster2block(fatset, file, nextcluster)
 		table.insert(chain, nextcluster)
 		if nextcluster <= 0x0002 or nextcluster >= 0xfff7 or cache[nextcluster] == true then
 			if nextcluster <= 0xfff7 then
 				print("fat16: Bad cluster chain, " .. startcluster)
+				print(table.concat(chain, ","))
 			end
 			break
 		end
