@@ -133,6 +133,9 @@ end
 
 function _fat16.doSomethingForFile(fatset, file, path, something)
 	local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+	if #name > 12 then
+		return false
+	end
 	path = fs.canonical(path .. "/..")
 	found, blockpos, entrycluster = _fat16.searchDirectoryLists(fatset, file, path)
 	if found == false then
@@ -200,12 +203,13 @@ function fat16.proxy(fatfile)
 		if path == "" then
 			return true
 		end
-		local file = io.open(fatfile,"rb")
 		local isDirectory
 		local function something(data)
 			isDirectory = bit32.band(data.attrib,0x10) ~= 0
 		end
+		local file = io.open(fatfile,"rb")
 		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		file:close()
 		if not found then
 			return nil, "no such file or directory"
 		end
@@ -220,12 +224,13 @@ function fat16.proxy(fatfile)
 			-- No modification date for root directory
 			return 0
 		end
-		local file = io.open(fatfile,"rb")
 		local modifyT, modifyD
 		local function something(data)
 			modifyT, modifyD = data.modifyT, data.modifyD
 		end
+		local file = io.open(fatfile,"rb")
 		local found = _fat16.doSomethingForFile(fatset, file, path, something)
+		file:close()
 		if not found then
 			return 0
 		end
@@ -255,6 +260,7 @@ function fat16.proxy(fatfile)
 		else
 			block = _fat16.readEntireEntry(fatset, file, entrycluster)
 		end
+		file:close()
 		local dirlist = _fat16.readDirBlock(fatset, block)
 		local fslist = {}
 		for _,data in ipairs(dirlist) do
@@ -267,11 +273,23 @@ function fat16.proxy(fatfile)
 				end
 			end
 		end
-		file:close()
 		fslist.n = #fslist
 		return fslist
 	end
 	proxyObj.spaceTotal = function()
+	end
+	proxyObj.exists = function(path)
+		if type(path) ~= "string" then
+			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
+		end
+		path = fs.canonical(path):lower()
+		if path == "" then
+			return true
+		end
+		local file = io.open(fatfile,"rb")
+		local found = _fat16.doSomethingForFile(fatset, file, path, function() end)
+		file:close()
+		return found
 	end
 	proxyObj.open = function(path, mode)
 		if type(path) ~= "string" then
@@ -279,7 +297,7 @@ function fat16.proxy(fatfile)
 		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
 			error("bad arguments #2 (string expected, got " .. type(mode) .. ")", 2)
 		end
-		if true then -- Check for existance
+		if proxyObj.exists(path) then
 			return nil, "file not found"
 		end
 		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "b" and mode ~= "a" and mode ~= "ab" then
@@ -291,7 +309,8 @@ function fat16.proxy(fatfile)
 				filedescript[rnddescrpt] = {
 					seek = 0,
 					mode = mode:sub(1,1) == "r" and "r" or "w",
-					buffer = ""
+					buffer = "",
+					cluster = nil -- First cluster needed for cluster chain needed for buffer
 				}
 				return rnddescrpt
 			end
@@ -374,39 +393,6 @@ function fat16.proxy(fatfile)
 		if type(path) ~= "string" then
 			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
 		end
-	end
-	proxyObj.exists = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
-		path = fs.canonical(path):lower()
-		if path == "" then
-			return true
-		end
-		local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
-		path = fs.canonical(path .. "/..")
-		local file = io.open(fatfile,"rb")
-		found, blockpos, entrycluster = _fat16.searchDirectoryLists(fatset, file, path)
-		if found == false then
-			return false
-		end
-		file:seek("set", fatset.bps * blockpos)
-		local block
-		if entrycluster == nil then
-			block = _fat16.readRawString(file, fatset.rdec * 32)
-		else
-			block = _fat16.readEntireEntry(fatset, file, entrycluster)
-		end
-		local dirlist = _fat16.readDirBlock(fatset, block)
-		for _,data in ipairs(dirlist) do
-			local fileflag = data.filename:sub(1,1) or 0
-			if fileflag ~= string.char(0x00) and fileflag ~= string.char(0xe5) and bit32.band(data.attrib,0x08) == 0 then
-				if name == data.filename then
-					return true
-				end
-			end
-		end
-		return false
 	end
 	proxyObj.spaceUsed = function()
 	end
