@@ -126,7 +126,7 @@ function tapefs.proxy(address)
 		filedescript[fd] = nil
 	end
 	proxyObj.getLabel = function()
-		return label
+		return component.invoke(address, "getLabel")
 	end
 	proxyObj.seek = function(fd,kind,offset)
 		if type(fd) ~= "number" then
@@ -170,7 +170,7 @@ function tapefs.proxy(address)
 		return false
 	end
 	proxyObj.setLabel = function(newlabel)
-		label = newlabel
+		component.invoke(address, "setLabel", newlabel)
 		return newlabel
 	end
 	proxyObj.makeDirectory = function(path)
