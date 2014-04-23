@@ -229,7 +229,6 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 	local found = true
 	for i = 1,#pathsplit do
 		local block
-		file:seek("set", fatset.bps * blockpos)
 		if i == 1 then
 			file:seek("set", fatset.bps * blockpos)
 			block = _msdos.readRawString(file, fatset.rdec * 32)				
@@ -601,6 +600,95 @@ function msdos.proxy(fatfile, fatsize)
 		end
 		path = fs.canonical(path .. "/..")
 		newpath = fs.canonical(newpath .. "/..")
+		local file = io.open(fatfile,"rb")
+		found, blockpos, entrycluster = _msdos.searchDirectoryLists(fatset, file, path)
+		if found == false then
+			file:close()
+			return false
+		end
+		found, blockpos2, entrycluster2 = _msdos.searchDirectoryLists(fatset, file, newpath)
+		if found == false then
+			file:close()
+			return false
+		end
+		local block
+		if entrycluster == nil then
+			file:seek("set", fatset.bps * blockpos)
+			block = _msdos.readRawString(file, fatset.rdec * 32)
+		else
+			block = _msdos.readEntireEntry(fatset, file, entrycluster)
+		end
+		local dirlist = _msdos.readDirBlock(fatset, block)
+		local entry, firstindex
+		for index,data in ipairs(dirlist) do
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
+			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename == name then
+				firstindex = index
+				local filename, ext
+				if newname:find(".",nil,true) ~= nil then
+					filename = newname:match("(.*)%..*")
+					ext = newname:match(".*%.(.*)")
+				else
+					filename = newname
+					ext = ""
+				end
+				filename = filename .. string.rep(" ", 8 - #filename)
+				ext = ext .. string.rep(" ", 3 - #ext)
+				entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(data.modifyT, 2) .. _msdos.number2string(data.modifyD, 2) .. _msdos.number2string(data.cluster, 2) .. _msdos.number2string(data.size, 4)
+				break
+			end
+		end
+		if entry == nil then
+			file:close()
+			return false
+		elseif name == newname then
+			file:close()
+			return true
+		end
+		if entrycluster2 == nil then
+			file:seek("set", fatset.bps * blockpos2)
+			block = _msdos.readRawString(file, fatset.rdec * 32)
+		else
+			block = _msdos.readEntireEntry(fatset, file, entrycluster2)
+		end
+		local dirlist = _msdos.readDirBlock(fatset, block)
+		for index,data in ipairs(dirlist) do
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
+			if fileflag == NUL or fileflag == string.char(0xE5) then
+				if entrycluster2 == nil then
+					file:close()
+					file = io.open(fatfile,"ab")
+					file:seek("set", fatset.bps * blockpos2 + ((index - 1) * 32))
+					file:write(entry)
+				else
+					local list = _msdos.getClusterChain(fatset, entrycluster2)
+					file:close()
+					local clusterList = math.floor((index - 1) / (fatset.bps * fatset.spc / 32))
+					local clusterPos = (index - 1) % (fatset.bps * fatset.spc / 32)
+					file = io.open(fatfile,"ab")
+					file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
+					file:write(entry)
+				end
+				if entrycluster == nil then
+					file:seek("set", fatset.bps * blockpos + ((firstindex - 1) * 32))
+					file:write(string.rep(NUL, 32))
+				else
+					file:close()
+					file = io.open(fatfile,"rb")
+					local list = _msdos.getClusterChain(fatset, entrycluster)
+					local clusterList = math.floor((firstindex - 1) / (fatset.bps * fatset.spc / 32))
+					local clusterPos = (firstindex - 1) % (fatset.bps * fatset.spc / 32)
+					file:close()
+					file = io.open(fatfile,"ab")
+					file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
+					file:write(string.rep(NUL, 32))
+				end
+				file:close()
+				return true
+			end
+		end
 		return false
 	end
 	proxyObj.read = function(fd, count)

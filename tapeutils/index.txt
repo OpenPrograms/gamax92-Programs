@@ -1,0 +1,13 @@
+A collection of programs useful for manipulating tapes.
+
+ loadtape.lua
+Loads a block of data into a tape drive, also sets playback speed.
+
+ formattape.lua
+Clears an entire tape back to 0x00.
+
+ dumptape.lua
+Dumps the contents of a tape into a file.
+
+ setspeed.lua
+Set the playback speed of a tape drive.
