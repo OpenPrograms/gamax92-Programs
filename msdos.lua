@@ -224,6 +224,9 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		end
 		table.insert(pathsplit, dir)
 	end
+	if fatCache[fatset.vsn].directoryLists[path] ~= nil then
+		return true, fatCache[fatset.vsn].directoryLists[path].pos, fatCache[fatset.vsn].directoryLists[path].cluster
+	end
 	local blockpos = (fatset.rb + (fatset.fatc * fatset.fatbc))
 	local entrycluster
 	local found = true
@@ -241,6 +244,21 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 			local fileflag = data.filename:sub(1,1)
 			if fileflag == "" then fileflag = NUL end
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
+				if bit32.band(data.attrib,0x10) ~= 0 then
+					-- Cache folders and their cluster as well
+					local cacheName = ""
+					for j = 1, i - 1 do
+						cacheName = cacheName .. pathsplit[j] .. "/"
+					end
+					cacheName = cacheName .. data.filename
+					fatCache[fatset.vsn].directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
+				end
+			end
+		end
+		for _,data in ipairs(dirlist) do
+			local fileflag = data.filename:sub(1,1)
+			if fileflag == "" then fileflag = NUL end
+			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 				if data.filename == pathsplit[i] then
 					blockpos = _msdos.cluster2block(fatset, data.cluster)
 					entrycluster = data.cluster
@@ -252,6 +270,9 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		if found == false then
 			break
 		end
+	end
+	if found == true then
+		fatCache[fatset.vsn].directoryLists[path] = {pos = blockpos, cluster = entrycluster}
 	end
 	return found, blockpos, entrycluster
 end
@@ -366,6 +387,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	fatset.fatsize = fatsize
 	fatCache[fatset.vsn] = {}
+	fatCache[fatset.vsn].directoryLists = {}
 	file:seek("set", fatset.bps * fatset.rb)
 	fatCache[fatset.vsn].fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
 	file:close()
@@ -441,6 +463,9 @@ function msdos.proxy(fatfile, fatsize)
 			if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 				if bit32.band(data.attrib,0x10) ~= 0 then
 					table.insert(fslist, data.filename .. "/")
+					-- Cache folders and their cluster as well
+					local cacheName = path .. (path ~= "" and "/" or "") .. data.filename
+					fatCache[fatset.vsn].directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
 				else
 					table.insert(fslist, data.filename)
 				end
@@ -570,6 +595,20 @@ function msdos.proxy(fatfile, fatsize)
 					file:write(fatCache[fatset.vsn].fatTable)
 				end
 				file:close()
+				-- Invalidate list cache entries
+				local listCacheKill = {}
+				local preppath = ""
+				if path ~= "" then
+					preppath = path .. "/"
+				end
+				for k,v in pairs(fatCache[fatset.vsn].directoryLists) do
+					if k == preppath .. name or k:sub(1, #preppath + #name + 1) == preppath .. name .. "/" then
+						table.insert(listCacheKill, k)
+					end
+				end
+				for i = 1, #listCacheKill do
+					fatCache[fatset.vsn].directoryLists[listCacheKill[i]] = nil
+				end
 				return true
 			end
 		end
