@@ -23,7 +23,6 @@ if #arg >= 3 then
 		error("No such tape drive", 2)
 	end
 end
-local speed = tonumber(arg[2]) or 1
 local td
 if #arg >= 3 then
 	td = component.proxy(arg[3])
@@ -60,5 +59,8 @@ end
 file:close()
 print("\nRewinding tape ...")
 td.seek(-math.huge)
-td.setSpeed(speed)
-print("Tape playback speed set to " .. speed .. ", " .. speed * 32768 .. "Hz")
+if #arg >= 2 then
+	local speed = tonumber(arg[2])
+	td.setSpeed(speed)
+	print("Tape playback speed set to " .. speed .. ", " .. speed * 32768 .. "Hz")
+end

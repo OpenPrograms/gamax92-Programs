@@ -1,0 +1,30 @@
+Modified versions of standard programs for improved or enhanced features.
+
+ format.lua
+Format tables to consistent width.
+Install in /lib
+
+ components.lua
+Version of components.lua that formats its output.
+Requires format.lua
+
+ df.lua
+Version of df.lua that formats its output.
+Requires format.lua
+
+ ls.lua
+Version of ls.lua that formats its output.
+option -l enhanced to show date and flags.
+Requires format.lua
+
+ more.lua
+Version of more.lua that supports multiple files and enter key.
+Status line now says --MORE-- instead of :
+Screen is also not cleared
+
+ less.lua
+Version of more.lua that supports arrow keys and enter key.
+
+ resolution.lua
+Version of resolution.lua that separates width and height via an "x" instead
+of a space.
