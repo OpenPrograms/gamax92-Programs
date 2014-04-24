@@ -1,0 +1,9 @@
+Immibis's Compression programs ported to OpenComputers.
+
+ compress.lua
+Immibis's compressor ported to OpenComputers.
+Also resolves paths and verify input existence.
+
+ decompress.lua
+Immibis's decompressor ported to OpenComputers.
+Also resolves paths and verify input existence.

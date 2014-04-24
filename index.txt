@@ -3,6 +3,9 @@ Miscellaneous utilities for OpenComputers by Gamax92.
  enhanced/
 Modified versions of standard programs for improved or enhanced features.
 
+ immibis-compress/
+Immibis's Compression programs ported to OpenComputers.
+
  tapeutils/
 A collection of programs useful for manipulating tapes.
 
