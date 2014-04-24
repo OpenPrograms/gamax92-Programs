@@ -13,7 +13,7 @@ end
 function format.tabulate(input, justify)
 	justify = justify or {}
 	local tabsize = {}
-	for i = 1, #input do
+	for i = 1, #input[1] do
 		tabsize[i] = 0
 	end
 	for _, entry in ipairs(input) do

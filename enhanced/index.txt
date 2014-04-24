@@ -6,6 +6,7 @@ Install in /lib
 
  components.lua
 Version of components.lua that formats its output.
+Supports filtering output with multiple arguments
 Requires format.lua
 
  df.lua

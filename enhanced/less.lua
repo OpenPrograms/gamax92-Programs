@@ -36,23 +36,41 @@ end
 
 local i = 1
 local operation = "none"
+local function drawPage()
+	term.setCursor(1, 1)
+	local buffer = ""
+	for j = i, i + h - 2 do
+		buffer = buffer .. (lines[j] or "~") .. "\n"
+	end
+	term.clear()
+	io.write(buffer)
+end
 while true do
-	if operation == "page" then
+	w, h = component.gpu.getResolution()
+	if operation == "none" then
+		drawPage()
+	elseif operation == "page" then
+		local old = i
 		i = math.min(i + h - 1, #lines - h + 2)
+		if i ~= old then
+			drawPage()
+		end
 	elseif operation == "down" then
 		if i < #lines - h + 2 then
 			i = i + 1
+			component.gpu.copy(0, 1, w, h - 1, 0, -1)
+			term.setCursor(1, h - 1)
+			term.clearLine()
+			io.write((lines[i + h - 2] or "~") .. "\n")
 		end
 	elseif operation == "up" then
 		if i > 1 then
 			i = i - 1
+			component.gpu.copy(0, 0, w, h - 1, 0, 1)
+			term.setCursor(1, 1)
+			term.clearLine()
+			io.write((lines[i] or "~") .. "\n")
 		end
-	end
-	w, h = component.gpu.getResolution()
-	term.setCursor(1, 1)
-	for j = i, i + h - 2 do
-		term.clearLine()
-		io.write((lines[j] or "~") .. "\n")
 	end
 	term.setCursor(1, h)
 	term.write(":")
