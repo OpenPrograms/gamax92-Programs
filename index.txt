@@ -6,6 +6,9 @@ Modified versions of standard programs for improved or enhanced features.
  tapeutils/
 A collection of programs useful for manipulating tapes.
 
+ utilset/
+Common utilties found on many linux distributions.
+
  install.lua
 Copy / to a mount point, then setup a boot script to remount /.
 
