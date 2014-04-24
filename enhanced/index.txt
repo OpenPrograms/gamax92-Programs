@@ -14,7 +14,7 @@ Requires format.lua
 
  ls.lua
 Version of ls.lua that formats its output.
-option -l enhanced to show date and flags.
+option -l enhanced to show date and flags as well as print a total.
 Requires format.lua
 
  more.lua
