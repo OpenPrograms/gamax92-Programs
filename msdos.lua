@@ -833,12 +833,14 @@ function msdos.proxy(fatfile, fatsize)
 			local curDate = os.date("*t")
 			local createT = bit32.lshift(curDate.hour, 11) + bit32.lshift(curDate.min, 5) + math.floor(curDate.sec/2)
 			local createD = bit32.lshift(math.max(curDate.year - 1980,0), 9) + bit32.lshift(curDate.month, 5) + curDate.day
+			if curDate.year - 1980 < 0 then
+				print("msdos: WARNING: Current year before 1980, year will be invalid")
+			end
 			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(filedescript[fd].chain[1], 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
 			if entrycluster == nil then
 				file:close()
 				file = io.open(fatfile,"ab")
 				file:seek("set", fatset.bps * blockpos + ((index - 1) * 32))
-				print(file)
 				file:write(entry)
 			else
 				local list = _msdos.getClusterChain(fatset, entrycluster)
