@@ -172,6 +172,9 @@ function _msdos.getClusterChain(fatset, startcluster)
 	else
 		highcluster = 0xFFF7
 	end
+	if nextcluster <= 0x0002 or nextcluster >= highcluster or cache[nextcluster] == true then
+		return chain
+	end
 	while true do
 		if fatset.fatsize == 12 then
 			nextcluster = _msdos.getFATEntry12(fatset, nextcluster)
@@ -300,7 +303,7 @@ function _msdos.doSomethingForFile(fatset, file, path, something)
 		if fileflag == "" then fileflag = NUL end
 		if fileflag ~= NUL and fileflag ~= string.char(0xE5) and bit32.band(data.attrib,0x08) == 0 and data.filename ~= "." and data.filename ~= ".." then
 			if name == data.filename then
-				something(data, index)
+				something(data, index, blockpos, entrycluster)
 				return true
 			end
 		end
@@ -507,8 +510,13 @@ function msdos.proxy(fatfile, fatsize)
 		local file = io.open(fatfile,"rb")
 		local found = _msdos.doSomethingForFile(fatset, file, path, function(data) filecluster, filesize = data.cluster, data.size end)
 		if not found then
-			file:close()
-			return nil, "file not found"
+			if mode:sub(1,1) ~= "w" then
+				file:close()
+				return nil, "file not found"
+			else
+				-- Allocate file.
+				return nil, "file not found"
+			end
 		end
 		while true do
 			local rnddescrpt = math.random(1000000000,9999999999)
@@ -518,8 +526,14 @@ function msdos.proxy(fatfile, fatsize)
 					mode = mode:sub(1,1) == "r" and "r" or "w",
 					buffer = "",
 					chain = _msdos.getClusterChain(fatset, filecluster),
-					size = filesize
+					size = filesize,
+					path = path
 				}
+				if mode:sub(1,1) == "a" then
+					-- Loading the entire file is bad.
+					filedescript[rnddescrpt].buffer = _msdos.readEntireEntry(fatset, file, filecluster)
+					filedescript[rnddescrpt].buffer = filedescript[rnddescrpt].buffer:sub(1, filesize)
+				end
 				file:close()
 				return rnddescrpt
 			end
@@ -774,13 +788,75 @@ function msdos.proxy(fatfile, fatsize)
 		if filedescript[fd] == nil then
 			return nil, "bad file descriptor"
 		end
+		if filedescript[fd].mode == "w" then
+			local clusters = math.ceil(#filedescript[fd].buffer / fatset.bps / fatset.spc)
+			for i = #filedescript[fd].chain, clusters do
+				filedescript[fd].chain[i] = _msdos.findFreeCluster(fatset)
+			end
+			if fatset.fatsize == 12 then
+				filedescript[fd].chain[clusters + 1] = 0xFFF
+			else
+				filedescript[fd].chain[clusters + 1] = 0xFFFF
+			end
+			local bpc = fatset.bps * fatset.spc
+			local file = io.open(fatfile,"wb")
+			for i = 1, clusters do
+				local block = _msdos.cluster2block(fatset, filedescript[fd].chain[i])
+				file:seek("set", block * fatset.bps)
+				file:write(filedescript[fd].buffer:sub(((i - 1) * bpc) + 1, i * bpc))
+			end
+			local fakefile = {seek = function() end, write = function() end}
+			for i = 1, clusters do
+				if fatset.fatsize == 12 then
+					_msdos.setFATEntry12(fatset, fakefile, filedescript[fd].chain[i], filedescript[fd].chain[i + 1])
+				else
+					_msdos.setFATEntry16(fatset, fakefile, filedescript[fd].chain[i], filedescript[fd].chain[i + 1])
+				end
+			end
+			for i = 0,fatset.fatc - 1 do
+				file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc))
+				file:write(fatCache[fatset.vsn].fatTable)
+			end
+			local data, index, blockpos, entrycluster
+			local file = io.open(fatfile,"rb")
+			local found = _msdos.doSomethingForFile(fatset, file, filedescript[fd].path, function (data1, index1, blockpos1, entrycluster1) data, index, blockpos, entrycluster = data1, index1, blockpos1, entrycluster1 end)
+			local filename, ext
+			if data.filename:find(".",nil,true) ~= nil then
+				filename = data.filename:match("(.*)%..*")
+				ext = data.filename:match(".*%.(.*)")
+			else
+				filename = data.filename
+				ext = ""
+			end
+			filename = filename .. string.rep(" ", 8 - #filename)
+			ext = ext .. string.rep(" ", 3 - #ext)
+			local curDate = os.date("*t")
+			local createT = bit32.lshift(curDate.hour, 11) + bit32.lshift(curDate.min, 5) + math.floor(curDate.sec/2)
+			local createD = bit32.lshift(math.max(curDate.year - 1980,0), 9) + bit32.lshift(curDate.month, 5) + curDate.day
+			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(filedescript[fd].chain[1], 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
+			if entrycluster == nil then
+				file:close()
+				file = io.open(fatfile,"ab")
+				file:seek("set", fatset.bps * blockpos + ((index - 1) * 32))
+				print(file)
+				file:write(entry)
+			else
+				local list = _msdos.getClusterChain(fatset, entrycluster)
+				file:close()
+				local clusterList = math.floor((index - 1) / (fatset.bps * fatset.spc / 32))
+				local clusterPos = (index - 1) % (fatset.bps * fatset.spc / 32)
+				file = io.open(fatfile,"ab")
+				file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
+				file:write(entry)
+			end
+			file:close()
+		end
 		filedescript[fd] = nil
 	end
 	proxyObj.getLabel = function()
 		return fatset.label
 	end
 	proxyObj.seek = function(fd,kind,offset)
-		-- Don't use.
 		if type(fd) ~= "number" then
 			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
 		elseif type(kind) ~= "string" then
@@ -803,9 +879,12 @@ function msdos.proxy(fatfile, fatsize)
 		elseif kind == "cur" then
 			newpos = filedescript[fd].seek + offset
 		elseif kind == "end" then
-			newpos = component.invoke(address, "getSize") + offset - 1 -- Get size of file
+			if filedescript[fd].mode == "r" then
+				newpos = filedescript[fd].size + offset
+			else
+				newpos = #filedescript[fd].buffer + offset
+			end
 		end
-		filedescript[fd].seek = math.min(math.max(newpos, 0), component.invoke(address, "getSize") - 1) -- size of file
 		return filedescript[fd].seek
 	end
 	proxyObj.size = function(path)
@@ -956,6 +1035,11 @@ function msdos.proxy(fatfile, fatsize)
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "w" then
 			return nil, "bad file descriptor"
 		end
+		if #filedescript[fd].buffer < filedescript[fd].seek then
+			filedescript[fd].buffer = filedescript[fd].buffer .. string.rep(NUL, filedescript[fd].seek - #filedescript[fd].buffer)
+		end
+		filedescript[fd].buffer = filedescript[fd].buffer:sub(1,filedescript[fd].seek) .. data .. filedescript[fd].buffer:sub(filedescript[fd].seek + #data + 1)
+		filedescript[fd].seek = filedescript[fd].seek + #data
 	end
 	proxyObj.fat = fatset
 	return proxyObj
