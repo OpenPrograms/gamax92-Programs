@@ -1,6 +1,7 @@
-local component = require("component")
-local shell = require("shell")
 local fs = require("filesystem")
+local component = require("component")
+local term = require("term")
+local shell = require("shell")
 
 local arg, options = shell.parse(...)
 if #arg < 1 then
@@ -18,7 +19,7 @@ if options.speed and (tonumber(options.speed) == nil or tonumber(options.speed) 
 end
 local td
 if options.address then
-	if type(options.address) ~= "string" then
+	if type(options.address) ~= "string" or options.address == "" then
 		error("Invalid address", 2)
 	end
 	local fulladdr = component.get(options.address)
@@ -40,7 +41,6 @@ if td.getSize() < filesize then
 	filesize = td.getSize()
 end
 local file = fs.open(arg[1],"rb")
-local term = require("term")
 local counter = 0
 if td.getState() ~= "STOPPED" then
 	print("Stopping tape ...")

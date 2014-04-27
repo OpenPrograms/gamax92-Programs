@@ -1,24 +1,26 @@
-local arg = { ... }
-if #arg > 1 then
-	print("Usage: formattape [address]")
+local component = require("component")
+local term = require("term")
+local shell = require("shell")
+local arg, options = shell.parse(...)
+
+if #arg > 0 then
+	print("Usage: formattape")
+	print("Options:")
+	print(" --address=addr  use tapedrive at address")
 	return
 end
-local component = require("component")
-if #arg == 1 then
-	local found = false
-	for k,v in component.list("tape_drive") do
-		if v == "tape_drive" and k == arg[1] then
-			found = true
-			break
-		end
-	end
-	if not found then
-		error("No such tape drive", 2)
-	end
-end
 local td
-if #arg == 1 then
-	td = component.proxy(arg[1])
+if options.address then
+	if type(options.address) ~= "string" or options.address == "" then
+		error("Invalid address", 2)
+	end
+	local fulladdr = component.get(options.address)
+	if fulladdr == nil then
+		error("No component at address", 2)
+	elseif component.type(fulladdr) ~= "tape_drive" then
+		error("Component specified is a " .. component.type(fulladdr), 2)
+	end
+	td = component.proxy(fulladdr)
 else
 	td = component.tape_drive
 end
@@ -26,7 +28,6 @@ if not td.isReady() then
 	error("No tape present",2)
 end
 local tapeSize = td.getSize()
-local term = require("term")
 local counter = 0
 if td.getState() ~= "STOPPED" then
 	print("Stopping tape ...")
