@@ -1,36 +1,38 @@
-local arg = { ... }
+local component = require("component")
+local shell = require("shell")
+local fs = require("filesystem")
+
+local arg, options = shell.parse(...)
 if #arg < 1 then
-	print("Usage: loadtape filename [speed] [address]")
+	print("Usage: loadtape filename")
+	print("Options:")
+	print(" --speed=n       set playback speed")
+	print(" --address=addr  use tapedrive at address")
 	return
 end
-local fs = require("filesystem")
 if not fs.exists(arg[1]) then
 	error("No such file", 2)
 end
-if #arg >= 2 and (tonumber(arg[2]) == nil or tonumber(arg[2]) < 0.25 or tonumber(arg[2]) > 2) then
+if options.speed and (tonumber(options.speed) == nil or tonumber(options.speed) < 0.25 or tonumber(options.speed) > 2) then
 	error("Invalid speed", 2)
 end
-local component = require("component")
-if #arg >= 3 then
-	local found = false
-	for k,v in component.list("tape_drive") do
-		if v == "tape_drive" and k == arg[3] then
-			found = true
-			break
-		end
-	end
-	if not found then
-		error("No such tape drive", 2)
-	end
-end
 local td
-if #arg >= 3 then
-	td = component.proxy(arg[3])
+if options.address then
+	if type(options.address) ~= "string" then
+		error("Invalid address", 2)
+	end
+	local fulladdr = component.get(options.address)
+	if fulladdr == nil then
+		error("No component at address", 2)
+	elseif component.type(fulladdr) ~= "tape_drive" then
+		error("Component specified is a " .. component.type(fulladdr), 2)
+	end
+	td = component.proxy(fulladdr)
 else
 	td = component.tape_drive
 end
 if not td.isReady() then
-	error("No tape present",2)
+	error("No tape present", 2)
 end
 local filesize = fs.size(arg[1])
 if td.getSize() < filesize then
@@ -59,8 +61,8 @@ end
 file:close()
 print("\nRewinding tape ...")
 td.seek(-math.huge)
-if #arg >= 2 then
-	local speed = tonumber(arg[2])
+if options.speed then
+	local speed = tonumber(options.speed)
 	td.setSpeed(speed)
 	print("Tape playback speed set to " .. speed .. ", " .. speed * 32768 .. "Hz")
 end
