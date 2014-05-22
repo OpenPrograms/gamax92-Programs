@@ -36,10 +36,10 @@ for i = 1, #dirs do
 		table.sort(list)
 		local toOutput = {}
 		local function getFileColor(file)
-			if fs.isDirectory(fs.concat(path, file)) then
-				return 0x66CCFF
-			elseif fs.isLink(fs.concat(path, file)) then
+			if fs.isLink(fs.concat(path, file)) then
 				return 0xFFAA00
+			elseif fs.isDirectory(fs.concat(path, file)) then
+				return 0x66CCFF
 			elseif file:sub(-4) == ".lua" then
 				return 0x00FF00
 			else
@@ -51,10 +51,10 @@ for i = 1, #dirs do
 			local totalSize = 0
 			for _, f in ipairs(list) do
 				local type
-				if fs.isDirectory(fs.concat(path, f)) then
-					type = "d"
-				elseif fs.isLink(fs.concat(path, f)) then
+				if fs.isLink(fs.concat(path, f)) then
 					type = "l"
+				elseif fs.isDirectory(fs.concat(path, f)) then
+					type = "d"
 				else
 					type = "-"
 				end
