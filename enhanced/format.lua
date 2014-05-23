@@ -11,6 +11,9 @@ function format.padStringRight(str, size)
 end
 
 function format.tabulate(input, justify)
+	if #input == 0 then
+		return
+	end
 	justify = justify or {}
 	local tabsize = {}
 	for i = 1, #input[1] do
