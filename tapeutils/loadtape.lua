@@ -11,6 +11,7 @@ if #arg < 1 then
 	print(" --address=addr  use tapedrive at address")
 	return
 end
+arg[1] = shell.resolve(arg[1])
 if not fs.exists(arg[1]) then
 	error("No such file", 2)
 end
