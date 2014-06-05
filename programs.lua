@@ -1,0 +1,52 @@
+{
+	["immibis-compress"] = {
+		files = {
+			["master/immibis-compress/compress.lua"] = "/bin",
+			["master/immibis-compress/decompress.lua"] = "/bin",
+		},
+		dependencies = {
+			["ipack"] = "/"
+		},
+		name = "ipack (de)compressor",
+		description = "Compressor and Decompressor for the ipack library",
+		authors = "gamax92, immibis"
+	},
+	["tapeutils"] = {
+		files = {
+			["master/tapeutils/dumptape.lua"] = "/bin",
+			["master/tapeutils/formattape.lua"] = "/bin",
+			["master/tapeutils/loadtape.lua"] = "/bin",
+			["master/tapeutils/setspeed.lua"] = "/bin",
+		},
+		dependencies = {
+		},
+		name = "tapeutils",
+		description = "Utilities for using Computronics Tape Drives",
+		authors = "gamax92"
+	},
+	["ipack"] = {
+		files = {
+			["master/immibis-compress/ipack.lua"] = "/lib",
+		},
+		name = "ipack compression library",
+		description = "ipack compression library based on immibis's compression routine",
+		authors = "gamax92, immibis"
+	},
+	["tapefs"] = {
+		files = {
+			["master/tapefs.lua"] = "/lib",
+			["master/tapefsd.lua"] = "/bin",
+		},
+		name = "tapefs",
+		description = "tapefs library and utilities",
+		authors = "gamax92"
+	},
+	["msdosfs"] = {
+		files = {
+			["master/msdos.lua"] = "/lib",
+		},
+		name = "msdos filesystem",
+		description = "provides msdos filesystem support",
+		authors = "gamax92"
+	},
+}
