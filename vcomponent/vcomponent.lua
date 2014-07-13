@@ -14,9 +14,7 @@ end
 
 local olist = component.list
 function component.list(filter)
-	if type(filter) ~= "nil" and type(filter) ~= "string" then
-		checkArg(1,filter,"string or nil")
-	end
+	checkArg(1,filter,"string","nil")
 	local data = {}
 	for k,v in olist(filter) do
 		data[#data + 1] = k
@@ -100,6 +98,27 @@ function vcomponent.unregister(address)
 	proxylist[address] = nil
 	typelist[address] = nil
 	return true
+end
+
+function vcomponent.list()
+	local list = {}
+	for k,v in pairs(proxylist) do
+		list[#list + 1] = {k,typelist[k],v}
+	end
+	return list
+end
+
+function vcomponent.resolve(address, componentType)
+	checkArg(1, address, "string")
+	checkArg(2, componentType, "string", "nil")
+	for k,v in pairs(typelist) do
+		if componentType == nil or v:find(componentType, nil, true) then
+			if k:sub(1, #address) == address then
+				return k
+			end
+		end
+	end
+	return nil, "no such component"
 end
 
 return vcomponent
