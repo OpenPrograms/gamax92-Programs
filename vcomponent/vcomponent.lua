@@ -13,17 +13,17 @@ function component.proxy(address)
 end
 
 local olist = component.list
-function component.list(filter)
+function component.list(filter, exact)
 	checkArg(1,filter,"string","nil")
 	local data = {}
-	for k,v in olist(filter) do
+	for k,v in olist(filter, exact) do
 		data[#data + 1] = k
 		data[#data + 1] = v
 	end
-	for k,v in pairs(proxylist) do
-		if filter == nil or typelist[k]:find(filter, nil, true) then
+	for k,v in pairs(typelist) do
+		if filter == nil or (exact and v == filter) or (not exact and v:find(filter, nil, true)) then
 			data[#data + 1] = k
-			data[#data + 1] = typelist[k]
+			data[#data + 1] = v
 		end
 	end
 	local place = 1
@@ -112,7 +112,7 @@ function vcomponent.resolve(address, componentType)
 	checkArg(1, address, "string")
 	checkArg(2, componentType, "string", "nil")
 	for k,v in pairs(typelist) do
-		if componentType == nil or v:find(componentType, nil, true) then
+		if componentType == nil or v == componentType then
 			if k:sub(1, #address) == address then
 				return k
 			end
