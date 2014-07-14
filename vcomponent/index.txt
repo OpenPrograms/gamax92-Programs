@@ -1,0 +1,13 @@
+Virtual Components system for OpenComputers.
+
+ vcomponent.lua
+Patches component api to support virtual components
+Install in /lib
+
+ vcmanage.lua
+List and delete virtual components
+Requires vcomponent.lua
+
+ vtest.lua
+Example for using vcomponent.lua
+Requires vcomponent.lua

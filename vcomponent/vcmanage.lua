@@ -15,7 +15,7 @@ if args[1] == "list" then
 			print(vclist[k][2], vclist[k][1])
 		end
 	end
-elseif args[1] == "delete" then
+elseif args[1] == "delete" or args[1] == "remove" then
 	if args[2] == nil then
 		error("Must specify address for deletion", 0)
 	end
@@ -39,6 +39,14 @@ elseif args[1] == "delete" then
 		end
 	end
 	print("No component removed")
+elseif args[1] == "deleteall" or args[1] == "removeall" then
+	local remv = 0
+	local vclist = vcomp.list()
+	for k = 1,#vclist do
+		local stat, problem = vcomp.unregister(vclist[k][1])
+		remv = remv + 1
+	end
+	print("Removed " .. remv .. " component" .. (remv == 1 and "s" or ""))
 else
 	error("Unknown command, " .. args[1], 0)
 end
