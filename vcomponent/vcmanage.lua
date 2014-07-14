@@ -2,6 +2,7 @@ local args = { ... }
 if #args < 1 or #args > 2 then
 	print("Usage: vcmanage list [filter]")
 	print("       vcmanage delete <address>")
+	print("       vcmanage deleteall")
 	return
 end
 
@@ -46,7 +47,7 @@ elseif args[1] == "deleteall" or args[1] == "removeall" then
 		local stat, problem = vcomp.unregister(vclist[k][1])
 		remv = remv + 1
 	end
-	print("Removed " .. remv .. " component" .. (remv == 1 and "s" or ""))
+	print("Removed " .. remv .. " component" .. (remv ~= 1 and "s" or ""))
 else
 	error("Unknown command, " .. args[1], 0)
 end
