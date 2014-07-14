@@ -1,5 +1,5 @@
 local args = { ... }
-if #args < 1 or #args > 2 then
+if #args < 1 or #args > 2 or args[1] == "help" then
 	print("Usage: vcmanage list [filter]")
 	print("       vcmanage delete <address>")
 	print("       vcmanage deleteall")
