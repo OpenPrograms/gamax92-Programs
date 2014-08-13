@@ -72,12 +72,14 @@ local chip8 = {
 	mem = {},
 	stack = {},
 	display = {},
+	ghost = {},
 	PC = 512,
 	I = 512,
 	REG = {},
 	delay = 0,
 	sound = 0,
-	IPF = 10,
+	IPF = 10, -- Instructions Per Frame
+	PDS = 50, -- Pixel Decrement Speed, set to 255 to disable.
 }
 for i = 0,4095 do
 	chip8.mem[i] = 0
@@ -233,10 +235,15 @@ while true do
 						if chip8.display[y+i][lx] == true then
 							chip8.REG[15] = 1
 						end
-						local CC = (not chip8.display[y+i][lx]) and 255 or 0
+						local CC = not chip8.display[y+i][lx]
 						chip8.display[y+i][lx] = not chip8.display[y+i][lx]
-						gpu.setColor(0,CC,0,255)
-						gpu.filledRectangle(lx * gpu_scale, (y+i) * gpu_scale, gpu_scale, gpu_scale)
+						if CC then
+							chip8.ghost[(y+i)*64 + lx] = nil
+							gpu.setColor(0,255,0,255)
+							gpu.filledRectangle(lx * gpu_scale, (y+i) * gpu_scale, gpu_scale, gpu_scale)
+						else
+							chip8.ghost[(y+i)*64 + lx] = 255
+						end
 					end
 				end
 			end
@@ -277,6 +284,15 @@ while true do
 		else
 			print("Unknown opcode: " .. string.format("%04X",opcode))
 		end
+	end
+	-- Decrement ghost pixels
+	for k,v in pairs(chip8.ghost) do
+		local x = k%64
+		local y = math.floor(k/64)
+		chip8.ghost[k] = chip8.ghost[k] - chip8.PDS
+		gpu.setColor(0,math.max(chip8.ghost[k],0),0)
+		gpu.filledRectangle(x * gpu_scale, y * gpu_scale, gpu_scale, gpu_scale)
+		if chip8.ghost[k] <= 0 then chip8.ghost[k] = nil end
 	end
 	-- Decrement timers
 	local oldsound = chip8.sound
