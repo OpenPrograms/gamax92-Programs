@@ -1,7 +1,22 @@
+--[[
+  This requires OCLights2.
+  Sadly, I don't have compiled builds of this, so go here and build this:
+  https://github.com/gamax92/CCLights2/tree/opencomputers
+--]]
 local component = require("component")
 local computer = require("computer")
 local fs = require("filesystem")
+local keyboard = require("keyboard")
+local event = require("event")
 local shell = require("shell")
+
+-- You can setup the keylayout here:
+local keylayout = {
+{"1","2","3","4"}, -- 1,2,3,C
+{"Q","W","E","R"}, -- 4,5,6,D
+{"A","S","D","F"}, -- 7,8,9,E
+{"Z","X","C","V"}, -- A,0,B,F
+}
 
 local function errprint(...)
 	local args = {...}
@@ -28,20 +43,12 @@ if not fs.exists(romfile) then
 	return
 end
 
--- So, since CCLights2's peripheral is called gpu, and OpenComputers also has a
--- gpu, we get to do this. Fun!
-local gpu
-for address,type in component.list("gpu",true) do
-	if component.methods(address)["drawTexture"] ~= nil then
-		gpu = component.proxy(address)
-		break
-	end
-end
-
-if gpu == nil then
-	errprint("Could not find a CCLights2 GPU")
+if component.isAvailable("ocl_gpu") == nil then
+	errprint("Could not find a OCLights2 GPU")
 	return
 end
+
+local gpu = component.ocl_gpu
 
 local playSound
 if component.isAvailable("masssound") then
@@ -57,7 +64,7 @@ print("Initializing GPU ...")
 gpu.bindTexture(0) -- Bind screen
 local gW,gH = gpu.getSize()
 if gW < 64 or gH < 32 then
-	errprint("Your Monitor attached to the GPU is too small")
+	errprint("Your Monitor attached to the GPU is too small (" .. gW .. "," .. gH .. ")")
 	return
 end
 local gpu_scale = math.floor(math.min(gW/64,gH/32))
@@ -73,6 +80,9 @@ local chip8 = {
 	stack = {},
 	display = {},
 	ghost = {},
+	keycode = {},
+	keyflip = {},
+	keystate = {},
 	PC = 512,
 	I = 512,
 	REG = {},
@@ -80,6 +90,7 @@ local chip8 = {
 	sound = 0,
 	IPF = 10, -- Instructions Per Frame
 	PDS = 50, -- Pixel Decrement Speed, set to 255 to disable.
+	running = true,
 }
 for i = 0,4095 do
 	chip8.mem[i] = 0
@@ -114,6 +125,26 @@ end
 for i = 0,15 do
 	chip8.REG[i] = 0
 end
+chip8.keycode[00] = keyboard.keys[keylayout[4][2]:lower()]
+chip8.keycode[01] = keyboard.keys[keylayout[1][1]:lower()]
+chip8.keycode[02] = keyboard.keys[keylayout[1][2]:lower()]
+chip8.keycode[03] = keyboard.keys[keylayout[1][3]:lower()]
+chip8.keycode[04] = keyboard.keys[keylayout[2][1]:lower()]
+chip8.keycode[05] = keyboard.keys[keylayout[2][2]:lower()]
+chip8.keycode[06] = keyboard.keys[keylayout[2][3]:lower()]
+chip8.keycode[07] = keyboard.keys[keylayout[3][1]:lower()]
+chip8.keycode[08] = keyboard.keys[keylayout[3][2]:lower()]
+chip8.keycode[09] = keyboard.keys[keylayout[3][3]:lower()]
+chip8.keycode[10] = keyboard.keys[keylayout[4][1]:lower()]
+chip8.keycode[11] = keyboard.keys[keylayout[4][3]:lower()]
+chip8.keycode[12] = keyboard.keys[keylayout[1][4]:lower()]
+chip8.keycode[13] = keyboard.keys[keylayout[2][4]:lower()]
+chip8.keycode[14] = keyboard.keys[keylayout[3][4]:lower()]
+chip8.keycode[15] = keyboard.keys[keylayout[4][4]:lower()]
+for i = 0,15 do
+	chip8.keyflip[chip8.keycode[i]] = i
+	chip8.keystate[i] = false
+end
 
 os.sleep(0.05) -- Above may be LVM intensive.
 
@@ -134,9 +165,21 @@ file:close()
 
 os.sleep(0.05) -- Above may be LVM intensive.
 
+event.listen("key_down",function(name,uuid,char,key,who)
+	if key == keyboard.keys["f1"] then chip8.running = false end
+	if chip8.keyflip[key] ~= nil then
+		chip8.keystate[chip8.keyflip[key]] = true
+	end
+end)
+event.listen("key_up",function(name,uuid,char,key,who)
+	if chip8.keyflip[key] ~= nil then
+		chip8.keystate[chip8.keyflip[key]] = false
+	end
+end)
+
 --Start emulating
 print("Beginning Emulation ...")
-while true do
+while chip8.running do
 	for i = 1,chip8.IPF do
 		local opcode = chip8.mem[chip8.PC] * 256 + chip8.mem[chip8.PC + 1] -- Opcodes are two bytes
 		chip8.PC = (chip8.PC + 2) % 4096 -- Advance PC
@@ -248,14 +291,17 @@ while true do
 				end
 			end
 		elseif base == 14 and value == 0x9E then -- Skips the next instruction if the key stored in REG[pX] is pressed
-			-- TODO: Implement
+			if chip8.keystate[chip8.REG[pX]] then
+				chip8.PC = chip8.PC + 2
+			end
 		elseif base == 14 and value == 0xA1 then -- Skips the next instruction if the key stored in REG[pX] isn't pressed
-			-- TODO: Implement
-			chip8.PC = chip8.PC + 2 -- Hack
+			if not chip8.keystate[chip8.REG[pX]] then
+				chip8.PC = chip8.PC + 2
+			end
 		elseif base == 15 and value == 0x07 then -- Sets REG[pX] to the value of the delay timer
 			chip8.REG[pX] = chip8.delay
 		elseif base == 15 and value == 0x0A then -- A key press is awaited, and then stored in REG[pX]
-			-- TODO: Implement
+			print("fixme: KEYWAIT") -- TODO: Implement
 		elseif base == 15 and value == 0x15 then -- Sets the delay timer to REG[pX]
 			chip8.delay = chip8.REG[pX]
 		elseif base == 15 and value == 0x18 then -- Sets the sound timer to REG[pX]
