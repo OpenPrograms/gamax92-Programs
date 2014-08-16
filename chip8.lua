@@ -170,11 +170,11 @@ local keywait = { false, -1 }
 event.listen("key_down",function(name,uuid,char,key,who)
 	if key == keyboard.keys["f1"] then chip8.running = false end
 	if chip8.keyflip[key] ~= nil then
-		chip8.keystate[chip8.keyflip[key]] = true
-		if keywait[1] == true then
+		if keywait[1] == true and chip8.keystate[chip8.keyflip[key]] == false then
 			keywait[1] = false
 			chip8.REG[keywait[2]] = chip8.keyflip[key]
 		end
+		chip8.keystate[chip8.keyflip[key]] = true
 	end
 end)
 event.listen("key_up",function(name,uuid,char,key,who)
@@ -281,18 +281,19 @@ while chip8.running do
 					for j = 0,7 do
 						local bit = (math.floor(data/(2^j))%2) == 1
 						local lx = (7 - j + x) % 64
+						local ly = (y + i) % 32
 						if bit then
-							if chip8.display[y+i][lx] == true then
+							if chip8.display[ly][lx] == true then
 								chip8.REG[15] = 1
 							end
-							local CC = not chip8.display[y+i][lx]
-							chip8.display[y+i][lx] = not chip8.display[y+i][lx]
+							local CC = not chip8.display[ly][lx]
+							chip8.display[ly][lx] = not chip8.display[ly][lx]
 							if CC then
-								chip8.ghost[(y+i)*64 + lx] = nil
+								chip8.ghost[ly*64 + lx] = nil
 								gpu.setColor(0,255,0,255)
-								gpu.filledRectangle(lx * gpu_scale, (y+i) * gpu_scale, gpu_scale, gpu_scale)
+								gpu.filledRectangle(lx * gpu_scale, ly * gpu_scale, gpu_scale, gpu_scale)
 							else
-								chip8.ghost[(y+i)*64 + lx] = 255
+								chip8.ghost[ly*64 + lx] = 255
 							end
 						end
 					end
