@@ -3,17 +3,14 @@ This will not support FAT32.
 1. Because FAT16 won't even properly fit on a tape or max sized file.
 2. Because FAT32's structure is incompatible with FAT12 and FAT16
 --]]
+local vcomp = require("vcomponent")
 local fs = require("filesystem")
 local io = require("io")
 
-local filedescript = {}
-
-local NUL = string.char(0x00)
+local NUL = '\0'
 
 local msdos = {}
 local _msdos = {}
-
-local fatCache = {}
 
 function _msdos.readRawString(file, size)
 	local str = ""
@@ -40,15 +37,14 @@ function _msdos.number2string(data, size)
 end
 
 function _msdos.validateName(name)
-	if name:find(".",nil,true) ~= nil then
+	if name:find(".",nil,true) then
 		if #name > 12 then
 			return false
 		end
-		local filename = name:match("(.*)%..*")
-		if #filename > 8 or filename:find(".",nil,true) ~= nil then
+		local filename, ext = name:match("(.*)%.(.+)")
+		if #filename > 8 or filename:find(".",nil,true) then
 			return false
 		end
-		local ext = name:match(".*%.(.*)")
 		if #ext > 3 then
 			return false
 		end
@@ -81,7 +77,7 @@ function _msdos.readDirEntry(fatset,block,count)
 	entry.modifyD = _msdos.string2number(block:sub(25,26))
 	local cluster
 	if fatset.fatsize == 12 then
-		cluster = bit32.band(_msdos.string2number(block:sub(27,28)),0x0FFF)
+		cluster = _msdos.string2number(block:sub(27,28)) % 0x1000
 	else
 		cluster = _msdos.string2number(block:sub(27,28))
 	end
@@ -108,7 +104,8 @@ function _msdos.fatclusterlookup(fatset, cluster)
 end
 
 function _msdos.getFATEntry12(fatset, cluster)
-	local fatTable = fatCache[fatset.vsn].fatTable
+	cluster = cluster % 0x1000
+	local fatTable = fatset.fatCache.fatTable
 	if cluster % 2 == 0 then
 		return bit32.band(_msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2)), 0x0FFF)
 	else
@@ -117,15 +114,25 @@ function _msdos.getFATEntry12(fatset, cluster)
 end
 
 function _msdos.getFATEntry16(fatset, cluster)
-	local fatTable = fatCache[fatset.vsn].fatTable
+	cluster = cluster % 0x10000
+	local fatTable = fatset.fatCache.fatTable
 	return _msdos.string2number(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 2))
 end
 
+function _msdos.getFATEntry(fatset, cluster)
+	if fatset.fatsize == 12 then
+		return _msdos.getFATEntry12(fatset, cluster)
+	else
+		return _msdos.getFATEntry16(fatset, cluster)
+	end
+end
+
 function _msdos.setFATEntry12(fatset, file, cluster, data)
+	cluster = cluster % 0x1000
 	if cluster < 2 then
 		error("Attempted to modify cluster " .. cluster .. "\n" .. debug.traceback())
 	end
-	local fatTable = fatCache[fatset.vsn].fatTable
+	local fatTable = fatset.fatCache.fatTable
 	if cluster % 2 == 0 then
 		local fatcrap = _msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2))
 		fatcrap = _msdos.number2string(bit32.band(fatcrap,0xF000) + bit32.band(data,0x0FFF), 2)
@@ -145,21 +152,30 @@ function _msdos.setFATEntry12(fatset, file, cluster, data)
 		end
 		fatTable = fatTable:sub(1, math.floor(cluster * 1.5)) .. fatcrap .. fatTable:sub(math.floor(cluster * 1.5) + 3)
 	end
-	fatCache[fatset.vsn].fatTable = fatTable
+	fatset.fatCache.fatTable = fatTable
 end
 
 function _msdos.setFATEntry16(fatset, file, cluster, data)
+	cluster = cluster % 0x10000
 	if cluster < 2 then
 		error("Attempted to modify cluster " .. cluster .. "\n" .. debug.traceback())
 	end
-	local fatTable = fatCache[fatset.vsn].fatTable
+	local fatTable = fatset.fatCache.fatTable
 	local fatcrap = _msdos.number2string(data, 2)
 	for i = 0,fatset.fatc - 1 do
 		file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc) + (cluster * 2))
 		file:write(fatcrap)
 	end
 	fatTable = fatTable:sub(1, (cluster * 2)) .. fatcrap .. fatTable:sub((cluster * 2) + 3)
-	fatCache[fatset.vsn].fatTable = fatTable
+	fatset.fatCache.fatTable = fatTable
+end
+
+function _msdos.setFATEntry(fatset, file, cluster, data)
+	if fatset.fatsize == 12 then
+		_msdos.setFATEntry12(fatset, file, cluster, data)
+	else
+		_msdos.setFATEntry16(fatset, file, cluster, data)
+	end
 end
 
 function _msdos.getClusterChain(fatset, startcluster)
@@ -195,16 +211,18 @@ function _msdos.getClusterChain(fatset, startcluster)
 end
 
 function _msdos.findFreeCluster(fatset)
-	local fatTable = fatCache[fatset.vsn].fatTable
+	local fatTable = fatset.fatCache.fatTable
 	for i = 0, fatset.tnoc - 1 do
-		local entry
-		if fatset.fatsize == 12 then
-			entry = _msdos.getFATEntry12(fatset, i)
-		else
-			entry = _msdos.getFATEntry16(fatset, i)
-		end
-		if entry == 0 then
-			return i
+		if not fatset.reserved[i] then
+			local entry
+			if fatset.fatsize == 12 then
+				entry = _msdos.getFATEntry12(fatset, i)
+			else
+				entry = _msdos.getFATEntry16(fatset, i)
+			end
+			if entry == 0 then
+				return i
+			end
 		end
 	end
 end
@@ -227,8 +245,8 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		end
 		table.insert(pathsplit, dir)
 	end
-	if fatCache[fatset.vsn].directoryLists[path] ~= nil then
-		return true, fatCache[fatset.vsn].directoryLists[path].pos, fatCache[fatset.vsn].directoryLists[path].cluster
+	if fatset.fatCache.directoryLists[path] ~= nil then
+		return true, fatset.fatCache.directoryLists[path].pos, fatset.fatCache.directoryLists[path].cluster
 	end
 	local blockpos = (fatset.rb + (fatset.fatc * fatset.fatbc))
 	local entrycluster
@@ -254,7 +272,7 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 						cacheName = cacheName .. pathsplit[j] .. "/"
 					end
 					cacheName = cacheName .. data.filename
-					fatCache[fatset.vsn].directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
+					fatset.fatCache.directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
 				end
 			end
 		end
@@ -275,13 +293,13 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		end
 	end
 	if found == true then
-		fatCache[fatset.vsn].directoryLists[path] = {pos = blockpos, cluster = entrycluster}
+		fatset.fatCache.directoryLists[path] = {pos = blockpos, cluster = entrycluster}
 	end
 	return found, blockpos, entrycluster
 end
 
 function _msdos.doSomethingForFile(fatset, file, path, something)
-	local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+	local name = path:match(".-([^\\/]-%.?)$")
 	if not _msdos.validateName(name) then
 		return false
 	end
@@ -338,19 +356,29 @@ function _msdos.recursiveKill(fatset, file, entrycluster)
 end
 
 function msdos.proxy(fatfile, fatsize)
+	checkArg(1,fatfile,"string")
+	checkArg(2,fatsize,"nil","number")
+	
+	if fatsize == 28 then fatsize = 32 end -- Allow for FAT28
+	if fatsize ~= nil and fatsize ~= 12 and fatsize ~= 16 and fatsize ~= 32 then
+		error("Invalid FAT size",2)
+	end
+	if fatsize == 32 then
+		error("FAT32 is unsupported by this driver.",2)
+	end
+
 	if not fs.exists(fatfile) then
-		error("No such file.",2)
+		error("No such file",2)
 	end
 	local file = io.open(fatfile,"rb")
+	if file == nil then
+		error("Failed to open file")
+	end
 	local pos, err = file:seek("set", 0x36)
 	if pos == nil then
 		error("Seeking failed: " .. err)
 	end
 	local bbs = _msdos.readRawString(file, 8)
-	if fatsize == 28 then fatsize = 32 end -- Allow for FAT28
-	if fatsize ~= nil and fatsize ~= 12 and fatsize ~= 16 and fatsize ~= 32 then
-		error("Invalid FAT size")
-	end
 	local fatset = {}
 	file:seek("set", 0)
 	local boot_block = _msdos.readRawString(file, 62)
@@ -386,21 +414,37 @@ function msdos.proxy(fatfile, fatsize)
 		end
 	end
 	if fatsize == 32 then
-		error("FAT32 is unsupported by this driver.")
+		error("FAT32 is unsupported by this driver.",2)
 	end
 	fatset.fatsize = fatsize
-	fatCache[fatset.vsn] = {}
-	fatCache[fatset.vsn].directoryLists = {}
+	fatset.fatCache = {}
+	fatset.fatCache.directoryLists = {}
+	-- fatset.fatCache. -- TODO: Where was I going with this? >_>
 	file:seek("set", fatset.bps * fatset.rb)
-	fatCache[fatset.vsn].fatTable = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+	local fats = {}
+	for i = 1,fatset.fatc do
+		fats[i] = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+	end
 	file:close()
+	if fatset.fatc > 1 then -- Validate FATs are the same
+		for i = 1,fatset.fatc - 1 do
+			if fats[i] ~= fats[i+1] then
+				print("msdos: FAT tables are inconsistent")
+			end
+		end
+	end
+	
+	fatset.fatCache.fatTable = fats[1]
+	fats = nil
+	local filedescript = {}
+	local writeBuff = {} -- TODO: Use
+	fatset.readBuff = {} -- TODO: Use?
+	fatset.reserved = {} -- Clusters reserved but not used
 	local proxyObj = {}
 	proxyObj.type = "filesystem"
-	proxyObj.address = string.format("%04X",bit32.rshift(fatset.vsn,16)) .. "-" .. string.format("%04X",bit32.band(fatset.vsn,0xFFFF)) -- FAT Serial Number
+	proxyObj.address = string.format("%04x",math.floor(fatset.vsn/65536)) .. "-" .. string.format("%04x",fatset.vsn % 0x10000) -- FAT Serial Number
 	proxyObj.isDirectory = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			return true
@@ -415,9 +459,7 @@ function msdos.proxy(fatfile, fatsize)
 		return isDirectory
 	end
 	proxyObj.lastModified = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			-- No modification date for root directory
@@ -436,13 +478,10 @@ function msdos.proxy(fatfile, fatsize)
 		local hour = bit32.rshift(bit32.band(modifyT, 0xF800), 11)
 		local min = bit32.rshift(bit32.band(modifyT, 0x07E0), 5)
 		local sec = bit32.band(modifyT, 0x001F) * 2
-		local modification = year * 31556940 + month * 2629746 + day * 86400 + hour * 3600 + min * 60 + sec
-		return modification
+		return year * 31556940 + month * 2629746 + day * 86400 + hour * 3600 + min * 60 + sec
 	end
 	proxyObj.list = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		local file = io.open(fatfile,"rb")
 		found, blockpos, entrycluster = _msdos.searchDirectoryLists(fatset, file, path)
@@ -468,7 +507,7 @@ function msdos.proxy(fatfile, fatsize)
 					table.insert(fslist, data.filename .. "/")
 					-- Cache folders and their cluster as well
 					local cacheName = path .. (path ~= "" and "/" or "") .. data.filename
-					fatCache[fatset.vsn].directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
+					fatset.fatCache.directoryLists[cacheName] = {pos = _msdos.cluster2block(fatset, data.cluster), cluster = data.cluster}
 				else
 					table.insert(fslist, data.filename)
 				end
@@ -481,9 +520,7 @@ function msdos.proxy(fatfile, fatsize)
 		return fatset.tnoc * fatset.spc * fatset.bps
 	end
 	proxyObj.exists = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			return true
@@ -494,28 +531,89 @@ function msdos.proxy(fatfile, fatsize)
 		return found
 	end
 	proxyObj.open = function(path, mode)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
-			error("bad arguments #2 (string expected, got " .. type(mode) .. ")", 2)
-		end
+		checkArg(1,path,"string")
+		checkArg(2,mode,"string")
 		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "wb" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode",2)
 		end
 		path = fs.canonical(path):lower()
 		if path == "" then
-			return nil
+			return nil, "file not found"
 		end
 		local filecluster, filesize
 		local file = io.open(fatfile,"rb")
 		local found = _msdos.doSomethingForFile(fatset, file, path, function(data) filecluster, filesize = data.cluster, data.size end)
 		if not found then
-			if mode:sub(1,1) ~= "w" then
+			if mode:sub(1,1) ~= "w" and mode:sub(1,1) ~= "a" then
 				file:close()
 				return nil, "file not found"
 			else
 				-- Allocate file.
-				return nil, "file not found"
+				local newname = path:match(".-([^\\/]-%.?)$")
+				if not _msdos.validateName(newname) then
+					return nil, "Invalid file path"
+				end
+
+				dirpath = fs.canonical(path .. "/..")
+				
+				found, blockpos, entrycluster = _msdos.searchDirectoryLists(fatset, file, dirpath)
+				
+				local block
+				if entrycluster == nil then
+					file:seek("set", fatset.bps * blockpos)
+					block = _msdos.readRawString(file, fatset.rdec * 32)
+				else
+					block = _msdos.readEntireEntry(fatset, file, entrycluster)
+				end
+		
+				local dirlist = _msdos.readDirBlock(fatset, block)
+				local found = false
+				for index,data in ipairs(dirlist) do
+					local fileflag = data.filename:sub(1,1)
+					if fileflag == "" then fileflag = NUL end
+					if fileflag == NUL or fileflag == string.char(0xE5) then
+						found = true
+						local filename, ext
+						if newname:find(".",nil,true) ~= nil then
+							filename, ext = newname:match("(.*)%.(.+)")
+							ext = ext .. string.rep(" ", 3 - #ext)
+						else
+							filename = newname
+							ext = "   "
+						end
+						filename = filename .. string.rep(" ", 8 - #filename)
+
+						local curDate = os.date("*t")
+						local createT = bit32.lshift(curDate.hour, 11) + bit32.lshift(curDate.min, 5) + math.floor(curDate.sec/2)
+						local createD = bit32.lshift(math.max(curDate.year - 1980,0), 9) + bit32.lshift(curDate.month, 5) + curDate.day
+						if curDate.year - 1980 < 0 then
+							print("msdos: WARNING: Current year before 1980, year will be invalid")
+						end
+						local entry = filename .. ext .. string.char(0x20) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. string.rep(NUL, 6)
+						if entrycluster == nil then
+							file:close()
+							file = io.open(fatfile,"ab")
+							file:seek("set", fatset.bps * blockpos + ((index - 1) * 32))
+							file:write(entry)
+						else
+							local list = _msdos.getClusterChain(fatset, entrycluster)
+							file:close()
+							local clusterList = math.floor((index - 1) / (fatset.bps * fatset.spc / 32))
+							local clusterPos = (index - 1) % (fatset.bps * fatset.spc / 32)
+							file = io.open(fatfile,"ab")
+							file:seek("set", (fatset.bps * _msdos.cluster2block(fatset, list[clusterList + 1])) + (clusterPos * 32))
+							file:write(entry)
+						end
+						file:close()
+						file = io.open(fatfile,"rb")
+						filecluster, filesize = 0, 0
+						break
+					end
+				end
+				if not found then
+					print("msdos: No available entry")
+					return nil, "not enough space"
+				end
 			end
 		end
 		while true do
@@ -525,14 +623,27 @@ function msdos.proxy(fatfile, fatsize)
 					seek = 0,
 					mode = mode:sub(1,1) == "r" and "r" or "w",
 					buffer = "",
-					chain = _msdos.getClusterChain(fatset, filecluster),
 					size = filesize,
 					path = path
 				}
+				if filecluster == 0 then
+					filedescript[rnddescrpt].chain = {}
+				else
+					filedescript[rnddescrpt].chain = _msdos.getClusterChain(fatset, filecluster)
+				end
 				if mode:sub(1,1) == "a" then
 					-- Loading the entire file is bad.
-					filedescript[rnddescrpt].buffer = _msdos.readEntireEntry(fatset, file, filecluster)
-					filedescript[rnddescrpt].buffer = filedescript[rnddescrpt].buffer:sub(1, filesize)
+					-- Do a little check
+					if filecluster == 0 and filesize ~= 0 then
+						print("msdos: Zero cluster with non zero file size")
+						print(path)
+					elseif filecluster ~= 0 and filesize == 0 then
+						print("msdos: Non zero cluster with zero file size")
+						print(path)
+					elseif filecluster ~= 0 then -- Don't attempt to load nothing
+						filedescript[rnddescrpt].buffer = _msdos.readEntireEntry(fatset, file, filecluster)
+						filedescript[rnddescrpt].buffer = filedescript[rnddescrpt].buffer:sub(1, filesize)
+					end
 				end
 				file:close()
 				return rnddescrpt
@@ -540,14 +651,12 @@ function msdos.proxy(fatfile, fatsize)
 		end
 	end
 	proxyObj.remove = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			return false
 		end
-		local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+		local name = path:match(".-([^\\/]-%.?)$")
 		if not _msdos.validateName(name) then
 			return false
 		end
@@ -598,15 +707,11 @@ function msdos.proxy(fatfile, fatsize)
 				end
 				local fakefile = {seek = function() end, write = function() end}
 				for i = 1, #chainlist do
-					if fatset.fatsize == 12 then
-						_msdos.setFATEntry12(fatset, fakefile, chainlist[i], 0x0000)
-					else
-						_msdos.setFATEntry16(fatset, fakefile, chainlist[i], 0x0000)
-					end
+					_msdos.setFATEntry(fatset, fakefile, chainlist[i], 0x0000)
 				end
 				for i = 0,fatset.fatc - 1 do
 					file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc))
-					file:write(fatCache[fatset.vsn].fatTable)
+					file:write(fatset.fatCache.fatTable)
 				end
 				file:close()
 				-- Invalidate list cache entries
@@ -615,13 +720,13 @@ function msdos.proxy(fatfile, fatsize)
 				if path ~= "" then
 					preppath = path .. "/"
 				end
-				for k,v in pairs(fatCache[fatset.vsn].directoryLists) do
+				for k,v in pairs(fatset.fatCache.directoryLists) do
 					if k == preppath .. name or k:sub(1, #preppath + #name + 1) == preppath .. name .. "/" then
 						table.insert(listCacheKill, k)
 					end
 				end
 				for i = 1, #listCacheKill do
-					fatCache[fatset.vsn].directoryLists[listCacheKill[i]] = nil
+					fatset.fatCache.directoryLists[listCacheKill[i]] = nil
 				end
 				return true
 			end
@@ -630,11 +735,8 @@ function msdos.proxy(fatfile, fatsize)
 		return false
 	end
 	proxyObj.rename = function(path, newpath)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		elseif type(newpath) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(newpath) .. ")", 2)
-		end
+		checkArg(1,path,"string")
+		checkArg(2,newpath,"string")
 		path = fs.canonical(path):lower()
 		newpath = fs.canonical(newpath):lower()
 		if path == "" then
@@ -643,11 +745,11 @@ function msdos.proxy(fatfile, fatsize)
 		if newpath == "" then
 			return false
 		end
-		local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+		local name = path:match(".-([^\\/]-%.?)$")
 		if not _msdos.validateName(name) then
 			return false
 		end
-		local _, newname, _ = newpath:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+		local newname = newpath:match(".-([^\\/]-%.?)$")
 		if not _msdos.validateName(newname) then
 			return false
 		end
@@ -746,11 +848,8 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.read = function(fd, count)
 		count = count or 1
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(count) ~= "number" then
-			error("bad arguments #2 (number expected, got " .. type(count) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,count,"number")
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "r" then
 			return nil, "bad file descriptor"
 		end
@@ -782,41 +881,41 @@ function msdos.proxy(fatfile, fatsize)
 		return data
 	end
 	proxyObj.close = function(fd)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
 		if filedescript[fd] == nil then
 			return nil, "bad file descriptor"
 		end
 		if filedescript[fd].mode == "w" then
 			local clusters = math.ceil(#filedescript[fd].buffer / fatset.bps / fatset.spc)
-			for i = #filedescript[fd].chain, clusters do
-				filedescript[fd].chain[i] = _msdos.findFreeCluster(fatset)
+			local chain = filedescript[fd].chain
+			if clusters ~= #chain then
+				print("msdos: Number of allocated clusters doesn't match buffer size")
+				print("AC: " .. #chain .. " BS: " .. clusters)
+				clusters = math.min(clusters, #chain)
 			end
 			if fatset.fatsize == 12 then
-				filedescript[fd].chain[clusters + 1] = 0xFFF
+				chain[clusters + 1] = 0xFFF
 			else
-				filedescript[fd].chain[clusters + 1] = 0xFFFF
+				chain[clusters + 1] = 0xFFFF
 			end
 			local bpc = fatset.bps * fatset.spc
-			local file = io.open(fatfile,"wb")
+			local file = io.open(fatfile,"ab")
 			for i = 1, clusters do
 				local block = _msdos.cluster2block(fatset, filedescript[fd].chain[i])
 				file:seek("set", block * fatset.bps)
 				file:write(filedescript[fd].buffer:sub(((i - 1) * bpc) + 1, i * bpc))
 			end
 			local fakefile = {seek = function() end, write = function() end}
+
 			for i = 1, clusters do
-				if fatset.fatsize == 12 then
-					_msdos.setFATEntry12(fatset, fakefile, filedescript[fd].chain[i], filedescript[fd].chain[i + 1])
-				else
-					_msdos.setFATEntry16(fatset, fakefile, filedescript[fd].chain[i], filedescript[fd].chain[i + 1])
-				end
+				_msdos.setFATEntry(fatset, fakefile, filedescript[fd].chain[i], filedescript[fd].chain[i + 1])
 			end
-			for i = 0,fatset.fatc - 1 do
-				file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc))
-				file:write(fatCache[fatset.vsn].fatTable)
-			end
+			
+			file:seek("set", fatset.bps * fatset.rb)
+			file:write(string.rep(fatset.fatCache.fatTable,fatset.fatc))
+			
+			file:close()
+
 			local data, index, blockpos, entrycluster
 			local file = io.open(fatfile,"rb")
 			local found = _msdos.doSomethingForFile(fatset, file, filedescript[fd].path, function (data1, index1, blockpos1, entrycluster1) data, index, blockpos, entrycluster = data1, index1, blockpos1, entrycluster1 end)
@@ -836,7 +935,7 @@ function msdos.proxy(fatfile, fatsize)
 			if curDate.year - 1980 < 0 then
 				print("msdos: WARNING: Current year before 1980, year will be invalid")
 			end
-			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(filedescript[fd].chain[1], 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
+			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(filedescript[fd].chain[1] or 0, 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
 			if entrycluster == nil then
 				file:close()
 				file = io.open(fatfile,"ab")
@@ -859,13 +958,9 @@ function msdos.proxy(fatfile, fatsize)
 		return fatset.label
 	end
 	proxyObj.seek = function(fd,kind,offset)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(kind) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(kind) .. ")", 2)
-		elseif type(offset) ~= "number" then
-			error("bad arguments #3 (number expected, got " .. type(kind) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,kind,"string")
+		checkArg(3,offset,"number")
 		if filedescript[fd] == nil then
 			return nil, "bad file descriptor"
 		end
@@ -890,9 +985,7 @@ function msdos.proxy(fatfile, fatsize)
 		return filedescript[fd].seek
 	end
 	proxyObj.size = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			return 0
@@ -907,9 +1000,11 @@ function msdos.proxy(fatfile, fatsize)
 		return filesize
 	end
 	proxyObj.isReadOnly = function()
-		return false
+		return false -- TODO: Check if file is readonly
 	end
 	proxyObj.setLabel = function(newlabel)
+		checkArg(1,newlabel,"string")
+		-- TODO: Check readonly status
 		newlabel = newlabel:sub(1,11)
 		origlabel = newlabel
 		fatset.label = newlabel
@@ -917,39 +1012,27 @@ function msdos.proxy(fatfile, fatsize)
 			newlabel = newlabel .. string.rep(" ", 11 - #newlabel)
 		end
 		fatset.bpblabel = newlabel
-		local file = io.open(fatfile,"wb")
+		local file = io.open(fatfile,"ab")
 		file:seek("set", 0x2B)
 		file:write(newlabel)
 		file:close()
 		return origlabel
 	end
 	proxyObj.makeDirectory = function(path)
-		-- This won't recursively make folders
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		-- TODO: Recursively make folders
+		checkArg(1,path,"string")
 		path = fs.canonical(path):lower()
 		if path == "" then
 			return false
 		end
-		local _, name, _ = path:match("(.-)([^\\/]-%.?([^%.\\/]*))$")
+		local name = path:match(".-([^\\/]-%.?)$")
+		if not _msdos.validateName(name) then
+			return false
+		end
 		local filename, ext
-		if name:find(".",nil,true) ~= nil then
-			if #name > 12 then
-				return false
-			end
-			filename = name:match("(.*)%..*")
-			if #filename > 8 or filename:find(".",nil,true) ~= nil then
-				return false
-			end
-			ext = name:match(".*%.(.*)")
-			if #ext > 3 then
-				return false
-			end
+		if name:find(".",nil,true) then
+			filename, ext = name:match("(.*)%.(.+)")
 		else
-			if #name > 8 then
-				return false
-			end
 			filename = name
 			ext = ""
 		end
@@ -1000,12 +1083,9 @@ function msdos.proxy(fatfile, fatsize)
 					file:write(entry)
 				end
 				file:seek("set", _msdos.cluster2block(fatset, freeCluster) * fatset.bps)
+				-- TODO: Write dot entries
 				file:write(string.rep(NUL, fatset.bps * fatset.spc))
-				if fatset.fatsize == 12 then
-					_msdos.setFATEntry12(fatset, file, freeCluster, 0x0FFF)
-				else
-					_msdos.setFATEntry16(fatset, file, freeCluster, 0xFFFF)
-				end
+				_msdos.setFATEntry(fatset, file, freeCluster, 0xFFFF)
 				file:close()
 				return true
 			end
@@ -1016,34 +1096,39 @@ function msdos.proxy(fatfile, fatsize)
 	proxyObj.spaceUsed = function()
 		local count = 0
 		for i = 0, fatset.tnoc - 1 do
-			local entry
-			if fatset.fatsize == 12 then
-				entry = _msdos.getFATEntry12(fatset, i)
-			else
-				entry = _msdos.getFATEntry16(fatset, i)
-			end
+			local entry = _msdos.getFATEntry(fatset, i)
 			if entry ~= 0 then
-				count = count + (fatset.spc * fatset.bps)
+				count = count + 1
 			end
 		end
-		return count
+		return count * (fatset.spc * fatset.bps)
 	end
 	proxyObj.write = function(fd,data)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(data) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(data) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,data,"string")
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "w" then
 			return nil, "bad file descriptor"
+		end
+		-- Check if we need more clusters
+		if math.ceil(#filedescript[fd].buffer / (fatset.spc * fatset.bps)) < math.ceil((#filedescript[fd].buffer + #data) / (fatset.spc * fatset.bps)) then
+			local freeCluster = _msdos.findFreeCluster(fatset)
+			if freeCluster == nil then
+				print("msdos: No more clusters")
+				return nil, "not enough space"
+			end
+			local chain = filedescript[fd].chain
+			chain[#chain + 1] = freeCluster
+			fatset.reserved[freeCluster] = true
 		end
 		if #filedescript[fd].buffer < filedescript[fd].seek then
 			filedescript[fd].buffer = filedescript[fd].buffer .. string.rep(NUL, filedescript[fd].seek - #filedescript[fd].buffer)
 		end
 		filedescript[fd].buffer = filedescript[fd].buffer:sub(1,filedescript[fd].seek) .. data .. filedescript[fd].buffer:sub(filedescript[fd].seek + #data + 1)
 		filedescript[fd].seek = filedescript[fd].seek + #data
+		return true
 	end
 	proxyObj.fat = fatset
+	vcomp.register(proxyObj.address, proxyObj.type, proxyObj)
 	return proxyObj
 end
 return msdos

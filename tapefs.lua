@@ -1,5 +1,6 @@
 -- WARNING: Severly untested.
 local component = require("component")
+local vcomp = require("vcomponent")
 local fs = require("filesystem")
 local io = require("io")
 
@@ -21,11 +22,9 @@ function tapefs.proxy(address)
 	component.invoke(address, "seek", -math.huge)
 	local proxyObj = {}
 	proxyObj.type = "filesystem"
-	proxyObj.address = address
+	proxyObj.address = "tfs-" .. address:gsub("-","")
 	proxyObj.isDirectory = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path)
 		if path == "" then
 			return true
@@ -36,16 +35,12 @@ function tapefs.proxy(address)
 		end
 	end
 	proxyObj.lastModified = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		-- Unsupported
 		return 0
 	end
 	proxyObj.list = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path)
 		if path ~= "" then
 			return nil, "no such file or directory"
@@ -62,11 +57,8 @@ function tapefs.proxy(address)
 		return component.invoke(address, "getSize")
 	end
 	proxyObj.open = function(path,mode)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		elseif type(mode) ~= "string" and type(mode) ~= "nil" then
-			error("bad arguments #2 (string expected, got " .. type(mode) .. ")", 2)
-		end
+		checkArg(1,path,"string")
+		checkArg(2,mode,"string")
 		if path ~= "data.raw" or not component.invoke(address, "isReady") then
 			return nil, "file not found"
 		end
@@ -85,26 +77,18 @@ function tapefs.proxy(address)
 		end
 	end
 	proxyObj.remove = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		return false
 	end
 	proxyObj.rename = function(path, newpath)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		elseif type(newpath) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(newpath) .. ")", 2)
-		end
+		checkArg(1,path,"string")
+		checkArg(1,newpath,"string")
 		return false
 	end
 	proxyObj.read = function(fd, count)
 		count = count or 1
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(count) ~= "number" then
-			error("bad arguments #2 (number expected, got " .. type(count) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,count,"number")
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "r" then
 			return nil, "bad file descriptor"
 		end
@@ -117,9 +101,7 @@ function tapefs.proxy(address)
 		return data
 	end
 	proxyObj.close = function(fd)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
 		if filedescript[fd] == nil then
 			return nil, "bad file descriptor"
 		end
@@ -129,13 +111,9 @@ function tapefs.proxy(address)
 		return component.invoke(address, "getLabel")
 	end
 	proxyObj.seek = function(fd,kind,offset)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(kind) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(kind) .. ")", 2)
-		elseif type(offset) ~= "number" then
-			error("bad arguments #3 (number expected, got " .. type(kind) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,kind,"string")
+		checkArg(3,offset,"number")
 		if filedescript[fd] == nil then
 			return nil, "bad file descriptor"
 		end
@@ -157,9 +135,7 @@ function tapefs.proxy(address)
 		return filedescript[fd].seek
 	end
 	proxyObj.size = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path)
 		if path == "data.raw" and component.invoke(address, "isReady") then
 			return component.invoke(address, "getSize")
@@ -174,15 +150,11 @@ function tapefs.proxy(address)
 		return newlabel
 	end
 	proxyObj.makeDirectory = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		return false
 	end
 	proxyObj.exists = function(path)
-		if type(path) ~= "string" then
-			error("bad arguments #1 (string expected, got " .. type(path) .. ")", 2)
-		end
+		checkArg(1,path,"string")
 		path = fs.canonical(path)
 		if (path == "data.raw" and component.invoke(address, "isReady")) or path == "" then
 			return true
@@ -193,11 +165,8 @@ function tapefs.proxy(address)
 		return component.invoke(address, "getSize")
 	end
 	proxyObj.write = function(fd,data)
-		if type(fd) ~= "number" then
-			error("bad arguments #1 (number expected, got " .. type(fd) .. ")", 2)
-		elseif type(data) ~= "string" then
-			error("bad arguments #2 (string expected, got " .. type(data) .. ")", 2)
-		end
+		checkArg(1,fd,"number")
+		checkArg(2,data,"string")
 		if filedescript[fd] == nil or filedescript[fd].mode ~= "w" then
 			return nil, "bad file descriptor"
 		end
@@ -209,6 +178,7 @@ function tapefs.proxy(address)
 		filedescript[fd].seek = filedescript[fd].seek + #data
 		return true
 	end
+	vcomp.register(proxyObj.address, proxyObj.type, proxyObj)
 	return proxyObj
 end
 return tapefs
