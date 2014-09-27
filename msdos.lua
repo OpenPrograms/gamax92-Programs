@@ -935,7 +935,7 @@ function msdos.proxy(fatfile, fatsize)
 			if curDate.year - 1980 < 0 then
 				print("msdos: WARNING: Current year before 1980, year will be invalid")
 			end
-			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(filedescript[fd].chain[1] or 0, 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
+			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(clusters > 0 and filedescript[fd].chain[1] or 0, 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
 			if entrycluster == nil then
 				file:close()
 				file = io.open(fatfile,"ab")
