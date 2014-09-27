@@ -709,8 +709,7 @@ function msdos.proxy(fatfile, fatsize)
 				for i = 1, #chainlist do
 					_msdos.setFATEntry(fatset, fakefile, chainlist[i], 0x0000)
 				end
-				for i = 0,fatset.fatc - 1 do
-					file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc))
+				for i = 1, fatset.fatc do
 					file:write(fatset.fatCache.fatTable)
 				end
 				file:close()
@@ -912,7 +911,9 @@ function msdos.proxy(fatfile, fatsize)
 			end
 			
 			file:seek("set", fatset.bps * fatset.rb)
-			file:write(string.rep(fatset.fatCache.fatTable,fatset.fatc))
+			for i = 1, fatset.fatc do
+				file:write(fatset.fatCache.fatTable)
+			end
 			
 			file:close()
 
