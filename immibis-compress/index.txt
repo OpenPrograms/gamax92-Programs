@@ -1,10 +1,5 @@
 Immibis's compression programs ported to OpenComputers.
 
- ipack.lua
-Immibis's compression routines ported to OpenComputers.
-Fixed a bug with the ending line not consistently existing.
-Install in /lib
-
  compress.lua
 Compress a file using the ipack compression routine.
 Requires ipack.lua
@@ -12,3 +7,8 @@ Requires ipack.lua
  decompress.lua
 Decompress a file using the ipack decompression routine.
 Requires ipack.lua
+
+ ipack.lua
+Immibis's compression routines ported to OpenComputers.
+Fixed a bug with the ending line not consistently existing.
+Install in /lib

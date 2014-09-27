@@ -15,19 +15,24 @@ Common utilties found on many linux distributions.
  vcomponent/
 Virtual Components system for OpenComputers.
 
- install.lua
-Copy / to a mount point, then setup a boot script to remount /.
+ chip8.lua
+CHIP8 emulator for OpenComputers. Requires OCLights2.
+
+ debug.lua
+Program debugger for OpenComputers.
+
+ fattest.lua
+Dump fat information provided by the msdos proxy.
+
+ msdos.lua
+Provides a filesystem proxy for FAT formatted files.
+Requires vcomponent.lua from vcomponent/
+Install in /lib
 
  tapefs.lua
 Provides a filesystem proxy that converts tape drives into files.
+Requires vcomponent.lua from vcomponent/
 Install in /lib
 
  tapefsd.lua
 Searches for all tape drives and mounts them with tapefs.
-
- msdos.lua
-Provides a filesystem proxy for FAT formatted files.
-Install in /lib
-
- fattest.lua
-Dump fat information provided by the msdos proxy.

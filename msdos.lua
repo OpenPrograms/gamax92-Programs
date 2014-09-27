@@ -610,6 +610,7 @@ function msdos.proxy(fatfile, fatsize)
 						break
 					end
 				end
+				-- TODO: Attempt to find, clean, and add a cluster
 				if not found then
 					print("msdos: No available entry")
 					return nil, "not enough space"
@@ -1091,6 +1092,7 @@ function msdos.proxy(fatfile, fatsize)
 				return true
 			end
 		end
+		-- TODO: Attempt to find, clean, and add a cluster
 		file:close()
 		return false
 	end
