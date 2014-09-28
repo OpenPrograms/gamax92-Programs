@@ -6,6 +6,9 @@ Modified versions of standard programs for improved or enhanced features.
  immibis-compress/
 Immibis's compression programs ported to OpenComputers.
 
+ KairosOS/
+Experimental kernel.
+
  tapeutils/
 A collection of programs useful for manipulating tapes.
 
