@@ -31,20 +31,23 @@ socket:setTimeout(3)
 local vnetfs = {}
 
 local function sendMessage(ctrl,data)
-	socket:write(string.char(ctrl) .. data .. "\n")
+	socket:write(string.char(ctrl + 31) .. data .. "\n")
 	socket:flush()
 end
 
 local function getData()
 	local stat, line, err = pcall(socket.read, socket, "*l")
 	if not stat then
-		print("ocnetfs: " .. line or "unknown error")
+		print("ocnetfs: " .. (line or "unknown error"))
 		vcomp.unregister(vnetfs.address)
+		return {}
 	elseif not line then
-		print("ocnetfs: " .. err or "unknown error")
+		print("ocnetfs: " .. (err or "unknown error"))
 		vcomp.unregister(vnetfs.address)
+		return {}
+	else
+		return load("return " .. line)()
 	end
-	return load("return " .. line)()
 end
 
 vnetfs.type = "filesystem"
