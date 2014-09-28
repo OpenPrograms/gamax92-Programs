@@ -180,7 +180,7 @@ while true do
 			-- TODO: Read, Write, Delete
 			
 		elseif ctrl == 11 then -- isReadOnly
-			sendData("{" .. tostring(change) .. "}")
+			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
 			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") ~= nil) .. "}")
 		elseif ctrl == 13 then -- getLabel
@@ -191,6 +191,8 @@ while true do
 		elseif ctrl == 15 then -- makeDirectory
 			if change then
 				sendData("{" .. tostring(lfs.mkdir(sanitizePath(ret[1]))) .. "}")
+			else
+				sendData("{false}")
 			end
 		elseif ctrl == 16 then -- list
 			ret[1] = sanitizePath(ret[1])

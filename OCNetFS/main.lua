@@ -149,7 +149,7 @@ function love.update()
 			-- TODO: Read, Write, Delete
 			
 		elseif ctrl == 11 then -- isReadOnly
-			sendData("{" .. tostring(change) .. "}")
+			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
 			sendData("{" .. tostring(love.filesystem.exists(ret[1])) .. "}")
 		elseif ctrl == 13 then -- getLabel
@@ -160,6 +160,8 @@ function love.update()
 		elseif ctrl == 15 then -- makeDirectory
 			if change then
 				sendData("{" .. tostring(love.filesystem.createDirectory(ret[1])) .. "}")
+			else
+				sendData("{false}")
 			end
 		elseif ctrl == 16 then -- list
 			local list = love.filesystem.getDirectoryItems(ret[1])
