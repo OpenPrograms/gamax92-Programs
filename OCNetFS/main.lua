@@ -158,11 +158,16 @@ function love.update()
 			-- TODO: Need to update this
 			sendData("{" .. curspace .. "}")
 		elseif ctrl == 15 then -- makeDirectory
-			sendData("{" .. tostring(love.filesystem.mkdir(ret[1])) .. "}")
+			if change then
+				sendData("{" .. tostring(love.filesystem.createDirectory(ret[1])) .. "}")
+			end
 		elseif ctrl == 16 then -- list
 			local list = love.filesystem.getDirectoryItems(ret[1])
 			local out = ""
 			for i = 1,#list do
+				if love.filesystem.isDirectory(ret[1] .. "/" .. list[i]) then
+					list[i] = list[i] .. "/"
+				end
 				out = out .. string.format("%q",list[i]):gsub("\\\n","\\n")
 				if i < #list then
 					out = out .. ","
