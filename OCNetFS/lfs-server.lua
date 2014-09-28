@@ -1,37 +1,74 @@
+-- Warning, this makes no attempt to sandbox
+-- Best to chroot/limit permissions for this server
 local socket = require("socket")
+local lfs = require("lfs")
 
 local server, client, totalspace, currspace, label, change
 local hndls = {}
 
+local function sanitizePath(path)
+	-- TODO: Actually sanitize
+	local currentdir = lfs.currentdir()
+	if currentdir:sub(-1,-1):find("[\\/]") then
+		currentdir = currentdir:sub(1,-2)
+	end
+	if path:sub(1,1):find("[\\/]") then
+		path = path:sub(2)
+	end
+	return lfs.currentdir() .. "/" .. path
+end
+
+local function getDirectoryItems(path)
+	local stat,iter,obj = pcall(lfs.dir,path)
+	if not stat then
+		print(iter)
+		return {}
+	end
+	local output = {}
+	for entry in function() return iter(obj) end do
+		if entry ~= "." and entry ~= ".." then
+			output[#output + 1] = entry
+		end
+	end
+	return output
+end
+
 local recurseCount
 function recurseCount(path)
 	local count = 0
-	local list = love.filesystem.getDirectoryItems(path)
+	local list = getDirectoryItems(path)
 	for i = 1,#list do
-		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
+		if lfs.attributes(path .. "/" .. list[i],"mode") == "directory" then
 			count = count + 512 + recurseCount(path .. "/" .. list[i])
 		else
-			count = count + love.filesystem.getSize(path .. "/" .. list[i])
+			local size = lfs.attributes(path .. "/" .. list[i],"size")
+			if size == nil then
+				print(path .. "/" .. list[i])
+				print(lfs.attributes(path .. "/" .. list[i],"mode"))
+			end
+			count = count + (lfs.attributes(path .. "/" .. list[i],"size") or 0)
 		end
 	end
 	return count
 end
 
-function love.load(arg)
-	totalspace = math.huge
-	curspace = 0
-	label = "netfs"
-	change = false
-	
-	print("Calculating current space usage ...")
-	curspace = recurseCount("/")
+local arg = { ... }
 
-	server = assert(socket.bind("*", 0))
-	local sID, sPort = server:getsockname()
-	server:settimeout(1)
+totalspace = math.huge
+curspace = 0
+label = "netfs"
+change = false
 
-	print("Binded to " .. sID .. ":" .. sPort)
-end
+print("Warning, this server makes no attempt to sandbox\nBest to chroot/limit permissions for this server\n")
+
+print("Calculating current space usage ...")
+curspace = recurseCount(sanitizePath("/"))
+
+server = assert(socket.bind("*", 0))
+local sID, sPort = server:getsockname()
+server:settimeout(1)
+
+print("Binded to " .. sID .. ":" .. sPort)
 
 local ots = tostring
 function tostring(obj)
@@ -51,7 +88,7 @@ local function sendData(msg)
 	client:send(msg .. "\n")
 end
 
-function love.update()
+while true do
 	if client == nil then
 		client = server:accept()
 		if client ~= nil then
@@ -75,21 +112,15 @@ function love.update()
 			return
 		end
 		if ctrl == 1 then -- size
-			local size = love.filesystem.getSize(ret[1])
+			local size = lfs.attributes(sanitizePath(ret[1]),"size")
 			sendData("{" .. size or 0 .. "}")
 		elseif ctrl == 2 then -- seek
 			local fd = ret[1]
 			if hndls[fd] == nil then
 				sendData("{nil, \"bad file descriptor\"}")
 			else
-				if ret[2] == "set" then
-					hndls[fd]:seek(ret[3])
-				elseif ret[2] == "cur" then
-					hndls[fd]:seek(hndls[fd]:tell() + ret[3])
-				elseif ret[2] == "end" then
-					hndls[fd]:seek(hndls[fd]:getSize() + ret[3])
-				end
-				sendData("{" .. hndls[fd]:tell() .. "}")
+				local new = hndls[fd]:seek(ret[2],ret[3])
+				sendData("{" .. new .. "}")
 			end
 		elseif ctrl == 3 then -- read
 			local fd = ret[1]
@@ -104,13 +135,13 @@ function love.update()
 				end
 			end
 		elseif ctrl == 4 then -- isDirectory
-			sendData("{" .. tostring(love.filesystem.isDirectory(ret[1])) .. "}")
+			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") == "directory") .. "}")
 		elseif ctrl == 5 then -- open
 			local mode = ret[2]:sub(1,1)
 			if mode == "w" or mode == "a" and not change then
 				sendData("{nil,\"file not found\"}") -- Yes, this is what it returns
 			else
-				local file, errorstr = love.filesystem.newFile(ret[1], mode)
+				local file, errorstr = io.open(ret[1], ret[2])
 				if not file then
 					sendData("{nil," .. string.format("%q",errorstr):gsub("\\\n","\\n") .. "}")
 				else
@@ -134,7 +165,7 @@ function love.update()
 			end
 			sendData("{\"" .. label .. "\"}")
 		elseif ctrl == 8 then -- lastModified
-			local modtime = love.filesystem.getLastModified(ret[1])
+			local modtime = lfs.attributes(sanitizePath(ret[1]),"modification")
 			sendData("{" .. modtime or 0 .. "}")
 		elseif ctrl == 9 then -- close
 			local fd = ret[1]
@@ -151,7 +182,7 @@ function love.update()
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(change) .. "}")
 		elseif ctrl == 12 then -- exists
-			sendData("{" .. tostring(love.filesystem.exists(ret[1])) .. "}")
+			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") ~= nil) .. "}")
 		elseif ctrl == 13 then -- getLabel
 			sendData("{\"" .. label .. "\"}")
 		elseif ctrl == 14 then -- spaceUsed
@@ -159,13 +190,14 @@ function love.update()
 			sendData("{" .. curspace .. "}")
 		elseif ctrl == 15 then -- makeDirectory
 			if change then
-				sendData("{" .. tostring(love.filesystem.createDirectory(ret[1])) .. "}")
+				sendData("{" .. tostring(lfs.mkdir(sanitizePath(ret[1]))) .. "}")
 			end
 		elseif ctrl == 16 then -- list
-			local list = love.filesystem.getDirectoryItems(ret[1])
+			ret[1] = sanitizePath(ret[1])
+			local list = getDirectoryItems(ret[1])
 			local out = ""
 			for i = 1,#list do
-				if love.filesystem.isDirectory(ret[1] .. "/" .. list[i]) then
+				if lfs.attributes(ret[1] .. "/" .. list[i],"mode") == "directory" then
 					list[i] = list[i] .. "/"
 				end
 				out = out .. string.format("%q",list[i]):gsub("\\\n","\\n")
@@ -185,7 +217,7 @@ function love.update()
 		elseif ctrl == 18 then -- remove
 			-- TODO: Recursive remove
 			if change then
-				sendData("{" .. tostring(love.filesystem.remove(ret[1])) .. "}")
+				sendData("{" .. tostring(lfs.rmdir(sanitizePath(ret[1]))) .. "}")
 			else
 				sendData("{false}")
 			end
