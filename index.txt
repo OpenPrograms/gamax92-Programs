@@ -9,6 +9,9 @@ Immibis's compression programs ported to OpenComputers.
  KairosOS/
 Experimental kernel.
 
+ OCNetFS/
+Networked (internet) filesystem for OpenComputers.
+
  tapeutils/
 A collection of programs useful for manipulating tapes.
 
