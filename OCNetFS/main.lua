@@ -1,35 +1,7 @@
 local socket = require("socket")
 
-local server, client, totalspace, currspace, label, change
+local server, client, totalspace, currspace, label, change, recurseCount, recursiveDestroy
 local hndls = {}
-
-local recurseCount
-function recurseCount(path)
-	local count = 0
-	local list = love.filesystem.getDirectoryItems(path)
-	for i = 1,#list do
-		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
-			count = count + 512 + recurseCount(path .. "/" .. list[i])
-		else
-			count = count + love.filesystem.getSize(path .. "/" .. list[i])
-		end
-	end
-	return count
-end
-
-local recursiveDestroy
-function recursiveDestroy(path)
-	local state = true
-	local list = love.filesystem.getDirectoryItems(path)
-	for i = 1,#list do
-		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
-			state = state and recursiveDestroy(path .. "/" .. list[i])
-		else
-			state = state and love.filesystem.remove(path .. "/" .. list[i])
-		end
-	end
-	return state
-end
 
 function love.load(arg)
 	-- Configuration
@@ -45,11 +17,40 @@ function love.load(arg)
 	print("Calculating current space usage ...")
 	curspace = recurseCount("/")
 
-	server = assert(socket.bind("*", 0))
-	local sID, sPort = server:getsockname()
-	server:settimeout(1)
+	local stat
+	stat, server = pcall(assert,socket.bind("*", 14948))
+	if not stat then
+		print("Failed to get default port 14948: " .. server)
+		server = assert(socket.bind("*", 0))
+	end
 
 	print("Binded to " .. sID .. ":" .. sPort)
+end
+
+function recurseCount(path)
+	local count = 0
+	local list = love.filesystem.getDirectoryItems(path)
+	for i = 1,#list do
+		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
+			count = count + 512 + recurseCount(path .. "/" .. list[i])
+		else
+			count = count + love.filesystem.getSize(path .. "/" .. list[i])
+		end
+	end
+	return count
+end
+
+function recursiveDestroy(path)
+	local state = true
+	local list = love.filesystem.getDirectoryItems(path)
+	for i = 1,#list do
+		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
+			state = state and recursiveDestroy(path .. "/" .. list[i])
+		else
+			state = state and love.filesystem.remove(path .. "/" .. list[i])
+		end
+	end
+	return state
 end
 
 local ots = tostring

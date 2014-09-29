@@ -1,10 +1,16 @@
 -- Warning, this makes no attempt to sandbox
 -- Best to chroot/limit permissions for this server
+local server, client, totalspace, curspace, label, change
+local hndls = {}
+
+-- Configuration
+totalspace = math.huge
+curspace = 0
+label = "netfs"
+change = false
+
 local socket = require("socket")
 local lfs = require("lfs")
-
-local server, client, totalspace, currspace, label, change
-local hndls = {}
 
 local function sanitizePath(path)
 	-- TODO: Actually sanitize
@@ -54,12 +60,6 @@ end
 
 local arg = { ... }
 
--- Configuration
-totalspace = math.huge
-curspace = 0
-label = "netfs"
-change = false
-
 print("Warning, this server makes no attempt to sandbox\nBest to chroot/limit permissions for this server\n")
 
 if change then
@@ -69,7 +69,12 @@ end
 print("Calculating current space usage ...")
 curspace = recurseCount(sanitizePath("/"))
 
-server = assert(socket.bind("*", 0))
+local stat
+stat, server = pcall(assert,socket.bind("*", 14948))
+if not stat then
+	print("Failed to get default port 14948: " .. server)
+	server = assert(socket.bind("*", 0))
+end
 local sID, sPort = server:getsockname()
 server:settimeout(1)
 
