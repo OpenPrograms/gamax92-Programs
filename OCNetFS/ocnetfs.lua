@@ -38,12 +38,14 @@ end
 local function getData()
 	local stat, line, err = pcall(socket.read, socket, "*l")
 	if not stat then
-		print("ocnetfs: " .. (line or "unknown error"))
+		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end}
 		vcomp.unregister(vnetfs.address)
+		print("ocnetfs: " .. (line or "unknown error"))
 		return {}
 	elseif not line then
-		print("ocnetfs: " .. (err or "unknown error"))
+		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end}
 		vcomp.unregister(vnetfs.address)
+		print("ocnetfs: " .. (err or "unknown error"))
 		return {}
 	else
 		return load("return " .. line)()

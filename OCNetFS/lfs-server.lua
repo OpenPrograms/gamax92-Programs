@@ -54,12 +54,17 @@ end
 
 local arg = { ... }
 
+-- Configuration
 totalspace = math.huge
 curspace = 0
 label = "netfs"
 change = false
 
 print("Warning, this server makes no attempt to sandbox\nBest to chroot/limit permissions for this server\n")
+
+if change then
+	print("Warning, modification enabled on product with no sandbox\n")
+end
 
 print("Calculating current space usage ...")
 curspace = recurseCount(sanitizePath("/"))
@@ -177,8 +182,7 @@ while true do
 				sendData("{}")
 			end
 		elseif ctrl == 10 then -- rename
-			-- TODO: Read, Write, Delete
-			sendData("{false}")
+			sendData("{" .. tostring(os.rename(sanitizePath(ret[1]),sanitizePath(ret[2])) == true) .. "}")
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
@@ -219,7 +223,11 @@ while true do
 		elseif ctrl == 18 then -- remove
 			-- TODO: Recursive remove
 			if change then
-				sendData("{" .. tostring(lfs.rmdir(sanitizePath(ret[1]))) .. "}")
+				if lfs.attributes(sanitizePath(ret[1]),"mode") == "directory" then
+					sendData("{" .. tostring(lfs.rmdir(sanitizePath(ret[1]))) .. "}")
+				else
+					os.remove(sanitizePath(ret[1]))
+				end
 			else
 				sendData("{false}")
 			end

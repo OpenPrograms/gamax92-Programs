@@ -17,11 +17,30 @@ function recurseCount(path)
 	return count
 end
 
+local recursiveDestroy
+function recursiveDestroy(path)
+	local state = true
+	local list = love.filesystem.getDirectoryItems(path)
+	for i = 1,#list do
+		if love.filesystem.isDirectory(path .. "/" .. list[i]) then
+			state = state and recursiveDestroy(path .. "/" .. list[i])
+		else
+			state = state and love.filesystem.remove(path .. "/" .. list[i])
+		end
+	end
+	return state
+end
+
 function love.load(arg)
+	-- Configuration
 	totalspace = math.huge
 	curspace = 0
 	label = "netfs"
 	change = false
+	
+	if change then
+		print("Modification enabled\n")
+	end
 	
 	print("Calculating current space usage ...")
 	curspace = recurseCount("/")
@@ -207,9 +226,8 @@ function love.update()
 				sendData("{" .. tostring(success) .. "}")
 			end
 		elseif ctrl == 18 then -- remove
-			-- TODO: Recursive remove
 			if change then
-				sendData("{" .. tostring(love.filesystem.remove(ret[1])) .. "}")
+				sendData("{" .. tostring(recursiveDestroy(ret[1])) .. "}")
 			else
 				sendData("{false}")
 			end
