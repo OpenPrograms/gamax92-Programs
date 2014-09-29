@@ -1,4 +1,4 @@
--- Warning, this makes no attempt to sandbox
+-- Warning, given a bug in this program, the client could potentially access files outside the folder
 -- Best to chroot/limit permissions for this server
 local server, client, totalspace, curspace, label, change
 local hndls = {}
@@ -13,15 +13,23 @@ local socket = require("socket")
 local lfs = require("lfs")
 
 local function sanitizePath(path)
-	-- TODO: Actually sanitize
 	local currentdir = lfs.currentdir()
 	if currentdir:sub(-1,-1):find("[\\/]") then
 		currentdir = currentdir:sub(1,-2)
 	end
-	if path:sub(1,1):find("[\\/]") then
-		path = path:sub(2)
+	path = ("/" .. path):gsub("\\", "/")
+	local tPath = {}
+	for part in path:gmatch("[^/]+") do
+   		if part ~= "" and part ~= "." then
+   			if part == ".." then
+   				table.remove(tPath)
+   			else
+   				table.insert(tPath, part)
+   			end
+   		end
 	end
-	return lfs.currentdir() .. "/" .. path
+	local newpath = currentdir .. "/" .. table.concat(tPath, "/")
+	return newpath
 end
 
 local function getDirectoryItems(path)
@@ -60,10 +68,10 @@ end
 
 local arg = { ... }
 
-print("Warning, this server makes no attempt to sandbox\nBest to chroot/limit permissions for this server\n")
+print("Warning, I take no responsibility if a bug in this program eats your computer\nIt's your fault for running it under such a permission\nThough, bug reports and fixes are welcomed ;)\n")
 
 if change then
-	print("Warning, modification enabled on product with no sandbox\n")
+	print("Warning, modification enabled on potentially dangerous program\n")
 end
 
 print("Calculating current space usage ...")
