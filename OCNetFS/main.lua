@@ -107,7 +107,7 @@ function love.update()
 			sendData("{" .. tostring(love.filesystem.isDirectory(ret[1])) .. "}")
 		elseif ctrl == 5 then -- open
 			local mode = ret[2]:sub(1,1)
-			if mode == "w" or mode == "a" and not change then
+			if (mode == "w" or mode == "a") and not change then
 				sendData("{nil,\"file not found\"}") -- Yes, this is what it returns
 			else
 				local file, errorstr = love.filesystem.newFile(ret[1], mode)
@@ -146,8 +146,30 @@ function love.update()
 				sendData("{}")
 			end
 		elseif ctrl == 10 then -- rename
-			-- TODO: Read, Write, Delete
-			
+			if change then
+				local data = love.filesystem.read(ret[1])
+				if not data then
+					sendData("{false}")
+				else
+					local succ = love.filesystem.write(ret[2],data)
+					if not succ then
+						sendData("{false}")
+					else
+						local succ = love.filesystem.remove(ret[1])
+						if not succ then
+							local succ = love.filesystem.remove(ret[2])
+							if not succ then
+								print("WARNING: two copies of " .. ret[1] .. " now exist")
+							end
+							sendData("{false}")
+						else
+							sendData("{true}")
+						end
+					end
+				end
+			else
+				sendData("{false}")
+			end
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists

@@ -138,7 +138,7 @@ while true do
 			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") == "directory") .. "}")
 		elseif ctrl == 5 then -- open
 			local mode = ret[2]:sub(1,1)
-			if mode == "w" or mode == "a" and not change then
+			if (mode == "w" or mode == "a") and not change then
 				sendData("{nil,\"file not found\"}") -- Yes, this is what it returns
 			else
 				local file, errorstr = io.open(ret[1], ret[2])
@@ -178,7 +178,7 @@ while true do
 			end
 		elseif ctrl == 10 then -- rename
 			-- TODO: Read, Write, Delete
-			
+			sendData("{false}")
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
