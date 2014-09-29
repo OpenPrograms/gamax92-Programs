@@ -118,7 +118,6 @@ local function sendData(msg)
 	client:send(msg .. "\n")
 end
 
--- TODO: Not working?
 local function checkArg(pos,obj,what)
 	if type(obj) ~= what then
 		sendData("bad argument #" .. pos .. " (" .. what .. " expected, got " .. type(obj) .. ")")
