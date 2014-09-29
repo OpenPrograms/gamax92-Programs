@@ -131,7 +131,7 @@ while true do
 		end
 		if ctrl == 1 then -- size
 			local size = lfs.attributes(sanitizePath(ret[1]),"size")
-			sendData("{" .. size or 0 .. "}")
+			sendData("{" .. (size or 0) .. "}")
 		elseif ctrl == 2 then -- seek
 			local fd = ret[1]
 			if hndls[fd] == nil then
@@ -184,7 +184,7 @@ while true do
 			sendData("{\"" .. label .. "\"}")
 		elseif ctrl == 8 then -- lastModified
 			local modtime = lfs.attributes(sanitizePath(ret[1]),"modification")
-			sendData("{" .. modtime or 0 .. "}")
+			sendData("{" .. (modtime or 0) .. "}")
 		elseif ctrl == 9 then -- close
 			local fd = ret[1]
 			if hndls[fd] == nil then

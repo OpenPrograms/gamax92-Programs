@@ -98,7 +98,7 @@ function love.update()
 		end
 		if ctrl == 1 then -- size
 			local size = love.filesystem.getSize(ret[1])
-			sendData("{" .. size or 0 .. "}")
+			sendData("{" .. (size or 0) .. "}")
 		elseif ctrl == 2 then -- seek
 			local fd = ret[1]
 			if hndls[fd] == nil then
@@ -157,7 +157,7 @@ function love.update()
 			sendData("{\"" .. label .. "\"}")
 		elseif ctrl == 8 then -- lastModified
 			local modtime = love.filesystem.getLastModified(ret[1])
-			sendData("{" .. modtime or 0 .. "}")
+			sendData("{" .. (modtime or 0) .. "}")
 		elseif ctrl == 9 then -- close
 			local fd = ret[1]
 			if hndls[fd] == nil then
