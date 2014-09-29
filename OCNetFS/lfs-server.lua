@@ -188,12 +188,6 @@ local function update()
 		if debug then
 			print(" > " .. ctrl .. "," .. line:sub(2))
 		end
-		if ctrl == -1 then
-			print("User requested disconnect")
-			client:close()
-			client = nil
-			return
-		end
 		local stat,ret = pcall(unserialize,line:sub(2))
 		if not stat then
 			if not debug then
