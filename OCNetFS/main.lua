@@ -78,16 +78,35 @@ function unserialize(str)
 	if type(str) ~= "string" then
 		error("bad argument #1: string expected, got " .. type(str),2)
 	end
-	if str:sub(1,1) == "{" and str:sub(-1,-1) == "}" then -- table
+	if str:sub(1,1) == "{" and str:sub(-1,-1) == "}" then
+		local i = 1
 		local gen = {}
 		local block = str:sub(2,-2) .. ","
-		for piece in block:gmatch("(.-),") do
-			if piece:find("^%[.-%]=.*") then
-				local key, value = piece:find("^%[(.-)%]=(.*)")
-				gen[unserialize(key)] = unserialize(value)
+		local str = false
+		local piece = ""
+		local last
+		for chr in block:gmatch(".") do
+			if str then
+				if chr == "\"" and last ~= "\\" then
+					str = false
+				end
+				piece = piece .. chr
+			elseif chr == "," then
+				if piece:find("^%[.-%]=.*") then
+					local key, value = piece:match("^%[(.-)%]=(.*)")
+					gen[unserialize(key)] = unserialize(value)
+				else
+					gen[i] = unserialize(piece)
+					i = i + 1
+				end
+				piece = ""
 			else
-				gen[#gen + 1] = unserialize(piece)
+				if chr == "\"" then
+					str = true
+				end
+				piece = piece .. chr
 			end
+			last = chr
 		end
 		return gen
 	elseif str:sub(1,1) == "\"" and str:sub(-1,-1) == "\"" then -- string
