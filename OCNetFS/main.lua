@@ -23,6 +23,8 @@ function love.load(arg)
 		print("Failed to get default port 14948: " .. server)
 		server = assert(socket.bind("*", 0))
 	end
+	local sID, sPort = server:getsockname()
+	server:settimeout(1)
 
 	print("Binded to " .. sID .. ":" .. sPort)
 end
