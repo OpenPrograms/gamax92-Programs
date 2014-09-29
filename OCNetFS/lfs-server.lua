@@ -1,13 +1,15 @@
 -- Warning, given a bug in this program, the client could potentially access files outside the folder
 -- Best to chroot/limit permissions for this server
-local server, client, totalspace, curspace, label, change
+local server, client, totalspace, curspace, port, label, change, debug, recurseCount
 local hndls = {}
 
 -- Configuration
 totalspace = math.huge
 curspace = 0
+port = 14948
 label = "netfs"
 change = false
+debug = false
 
 local socket = require("socket")
 local lfs = require("lfs")
@@ -47,7 +49,6 @@ local function getDirectoryItems(path)
 	return output
 end
 
-local recurseCount
 function recurseCount(path)
 	local count = 0
 	local list = getDirectoryItems(path)
@@ -78,9 +79,9 @@ print("Calculating current space usage ...")
 curspace = recurseCount(sanitizePath("/"))
 
 local stat
-stat, server = pcall(assert,socket.bind("*", 14948))
+stat, server = pcall(assert,socket.bind("*", port))
 if not stat then
-	print("Failed to get default port 14948: " .. server)
+	print("Failed to get default port " .. port .. ": " .. server)
 	server = assert(socket.bind("*", 0))
 end
 local sID, sPort = server:getsockname()
@@ -101,12 +102,54 @@ function tostring(obj)
 	end
 end
 
+-- Unserialize without loadstring, for security purposes.
+-- Not very robust but gets the job done.
+local unserialize
+function unserialize(str)
+	if type(str) ~= "string" then
+		error("bad argument #1: string expected, got " .. type(str),2)
+	end
+	if str:sub(1,1) == "{" and str:sub(-1,-1) == "}" then -- table
+		local gen = {}
+		local block = str:sub(2,-2) .. ","
+		for piece in block:gmatch("(.-),") do
+			if piece:find("^%[.-%]=.*") then
+				local key, value = piece:find("^%[(.-)%]=(.*)")
+				gen[unserialize(key)] = unserialize(value)
+			else
+				gen[#gen + 1] = unserialize(piece)
+			end
+		end
+		return gen
+	elseif str:sub(1,1) == "\"" and str:sub(-1,-1) == "\"" then -- string
+		return str:sub(2,-2):gsub("\\a","\a"):gsub("\\b","\b"):gsub("\\f","\f"):gsub("\\n","\n"):gsub("\\r","\r"):gsub("\\t","\t"):gsub("\\v","\v"):gsub("\\\"","\""):gsub("\\'","'"):gsub("\\\n","\n"):gsub("\\0","\0"):gsub("\\(%d%d?%d?)",string.char):gsub("\\\\","\\")
+	elseif tonumber(str) then
+		return tonumber(str)
+	elseif str == "0/0" then
+		return 0/0
+	elseif str == "math.huge" then
+		return math.huge
+	elseif str == "-math.huge" then
+		return -math.huge
+	elseif str == "true" then
+		return true
+	elseif str == "false" then
+		return false
+	elseif str == "nil" then
+		return nil
+	else
+		error("Cannot unserialize " .. str,2)
+	end
+end
+
 local function sendData(msg)
-	print(" < " .. msg)
+	if debug then
+		print(" < " .. msg)
+	end
 	client:send(msg .. "\n")
 end
 
-while true do
+local function update()
 	if client == nil then
 		client = server:accept()
 		if client ~= nil then
@@ -114,16 +157,31 @@ while true do
 			print("User connected from: " .. ci .. ":" .. cp)
 		end
 	else
-		local line = client:receive()
+		local line, err = client:receive()
+		if not line then
+			print("socket receive gave: " .. err)
+			if err ~= "closed" then
+				pcall(client.close,client)
+			end
+			client = nil
+			return
+		end
 		local ctrl = line:byte(1,1) - 31
-		print(" > " .. ctrl .. "," .. line:sub(2))
-		local retfn,err = loadstring("return " .. line:sub(2))
-		if retfn == nil then
-			print("Bad Input: " .. err)
+		if debug then
+			print(" > " .. ctrl .. "," .. line:sub(2))
+		end
+		if ctrl == -1 then
+			print("User requested disconnect")
+			client:close()
+			client = nil
+			return
+		end
+		local stat,ret = pcall(unserialize,line:sub(2))
+		if not stat then
+			print("Bad Input: " .. ret)
 			sendData("{nil,\"bad input\"}")
 			return
 		end
-		local ret = retfn()
 		if type(ret) ~= "table" then
 			print("Bad Input (exec): " .. type(ret))
 			sendData("{nil,\"bad input\"}")
@@ -177,11 +235,12 @@ while true do
 		elseif ctrl == 6 then -- spaceTotal
 			sendData("{" .. tostring(totalspace) .. "}")
 		elseif ctrl == 7 then -- setLabel
-			-- TODO: Error to client
 			if change then
 				label = ret[1]
+				sendData("{\"" .. label .. "\"}")
+			else
+				sendData("label is read only")
 			end
-			sendData("{\"" .. label .. "\"}")
 		elseif ctrl == 8 then -- lastModified
 			local modtime = lfs.attributes(sanitizePath(ret[1]),"modification")
 			sendData("{" .. (modtime or 0) .. "}")
@@ -252,4 +311,8 @@ while true do
 			print("Unknown control: " .. ctrl)
 		end
 	end
+end
+
+while true do
+	update()
 end

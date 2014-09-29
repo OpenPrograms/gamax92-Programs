@@ -25,7 +25,24 @@ local internet = require("internet")
 local serialization = require("serialization")
 local vcomp = require("vcomponent")
 
+local computer = require("computer")
+if computer["_ocnetfs"] == nil then
+	computer["_ocnetfs"] = {}
+	local ocr = computer.shutdown
+	function computer.shutdown(reboot)
+		for k,v in pairs(computer["_ocnetfs"]) do
+			pcall(function()
+				k:write("\30\n")
+				k:flush()
+				k:close()
+			end)
+		end
+		ocr(reboot)
+	end
+end
+
 local socket = internet.open(ip,port)
+computer["_ocnetfs"][socket] = true
 socket:setTimeout(3)
 
 local vnetfs = {}
@@ -38,15 +55,21 @@ end
 local function getData()
 	local stat, line, err = pcall(socket.read, socket, "*l")
 	if not stat then
-		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end}
+		socket:close()
+		computer["_ocnetfs"][socket] = nil
+		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end, close = function() end}
 		vcomp.unregister(vnetfs.address)
 		print("ocnetfs: " .. (line or "unknown error"))
 		return {}
 	elseif not line then
-		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end}
+		socket:close()
+		computer["_ocnetfs"][socket] = nil
+		socket = {read = function() return nil, "non open socket" end, write = function() end, flush = function() end, close = function() end}
 		vcomp.unregister(vnetfs.address)
 		print("ocnetfs: " .. (err or "unknown error"))
 		return {}
+	elseif line:sub(1,1) ~= "{" then
+		error(line,3)
 	else
 		return load("return " .. line)()
 	end
