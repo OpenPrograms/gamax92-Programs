@@ -85,6 +85,29 @@ while true do
 				world.setBlocks(info.pos1[1],info.pos1[2],info.pos1[3],info.pos2[1],info.pos2[2],info.pos2[3],id,damage)
 			end
 		end
+	elseif parse[1] == "walls" then
+		parse[3] = parse[3] or "0"
+		if not tonumber(parse[2]) or not tonumber(parse[3]) then
+			print("Invalid argument, Expected: set ID [damage]")
+		else
+			local id = tonumber(parse[2])
+			local damage = tonumber(parse[2])
+			if not info.pos1 then
+				print("Please set pos1")
+			elseif not info.pos2 then
+				print("Please set pos2")
+			else
+				local size = ((math.abs(info.pos1[2]-info.pos2[2])+1) * (math.abs(info.pos1[3]-info.pos2[3])+1) * 2) + ((math.abs(info.pos1[1]-info.pos2[1])+1) * (math.abs(info.pos1[2]-info.pos2[2])-1) * 2)
+				print("Setting " .. size .. " block" .. (size == 1 and "" or "s"))
+				world.setBlocks(info.pos1[1],info.pos1[2],info.pos1[3],info.pos1[1],info.pos2[2],info.pos2[3],id,damage)
+				world.setBlocks(info.pos2[1],info.pos1[2],info.pos1[3],info.pos2[1],info.pos2[2],info.pos2[3],id,damage)
+				world.setBlocks(info.pos1[1],info.pos1[2],info.pos1[3],info.pos2[1],info.pos2[2],info.pos1[3],id,damage)
+				world.setBlocks(info.pos1[1],info.pos1[2],info.pos2[3],info.pos2[1],info.pos2[2],info.pos2[3],id,damage)
+			end
+		end
+	elseif parse[1] == "quit" then
+		print("Goodbye!")
+		return
 	else
 		print("Unknown command: " .. parse[1])
 	end
