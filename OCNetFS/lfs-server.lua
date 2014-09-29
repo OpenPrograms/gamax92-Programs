@@ -135,7 +135,7 @@ function unserialize(str)
 		return true
 	elseif str == "false" then
 		return false
-	elseif str == "nil" then
+	elseif str == "nil" or str == "" then
 		return nil
 	else
 		error("Cannot unserialize " .. str,2)
@@ -147,6 +147,15 @@ local function sendData(msg)
 		print(" < " .. msg)
 	end
 	client:send(msg .. "\n")
+end
+
+-- TODO: Not working?
+local function checkArg(pos,obj,what)
+	if type(obj) ~= what then
+		sendData("bad argument #" .. pos .. " (" .. what .. " expected, got " .. type(obj) .. ")")
+		return false
+	end
+	return true
 end
 
 local function update()
@@ -178,19 +187,29 @@ local function update()
 		end
 		local stat,ret = pcall(unserialize,line:sub(2))
 		if not stat then
+			if not debug then
+				print(" > " .. ctrl .. "," .. line:sub(2))
+			end
 			print("Bad Input: " .. ret)
 			sendData("{nil,\"bad input\"}")
 			return
 		end
 		if type(ret) ~= "table" then
+			if not debug then
+				print(" > " .. ctrl .. "," .. line:sub(2))
+			end
 			print("Bad Input (exec): " .. type(ret))
 			sendData("{nil,\"bad input\"}")
 			return
 		end
 		if ctrl == 1 then -- size
+			if not checkArg(1,ret[1],"string") then return end
 			local size = lfs.attributes(sanitizePath(ret[1]),"size")
 			sendData("{" .. (size or 0) .. "}")
 		elseif ctrl == 2 then -- seek
+			if not checkArg(1,ret[1],"number") then return end
+			if not checkArg(2,ret[2],"string") then return end
+			if not checkArg(3,ret[3],"number") then return end
 			local fd = ret[1]
 			if hndls[fd] == nil then
 				sendData("{nil, \"bad file descriptor\"}")
@@ -199,6 +218,8 @@ local function update()
 				sendData("{" .. new .. "}")
 			end
 		elseif ctrl == 3 then -- read
+			if not checkArg(1,ret[1],"number") then return end
+			if not checkArg(2,ret[2],"number") then return end
 			local fd = ret[1]
 			if hndls[fd] == nil then
 				sendData("{nil, \"bad file descriptor\"}")
@@ -211,8 +232,11 @@ local function update()
 				end
 			end
 		elseif ctrl == 4 then -- isDirectory
+			if not checkArg(1,ret[1],"string") then return end
 			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") == "directory") .. "}")
 		elseif ctrl == 5 then -- open
+			if not checkArg(1,ret[1],"string") then return end
+			if not checkArg(2,ret[2],"string") then return end
 			local mode = ret[2]:sub(1,1)
 			if (mode == "w" or mode == "a") and not change then
 				sendData("{nil,\"file not found\"}") -- Yes, this is what it returns
@@ -235,6 +259,7 @@ local function update()
 		elseif ctrl == 6 then -- spaceTotal
 			sendData("{" .. tostring(totalspace) .. "}")
 		elseif ctrl == 7 then -- setLabel
+			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				label = ret[1]
 				sendData("{\"" .. label .. "\"}")
@@ -242,9 +267,11 @@ local function update()
 				sendData("label is read only")
 			end
 		elseif ctrl == 8 then -- lastModified
+			if not checkArg(1,ret[1],"string") then return end
 			local modtime = lfs.attributes(sanitizePath(ret[1]),"modification")
 			sendData("{" .. (modtime or 0) .. "}")
 		elseif ctrl == 9 then -- close
+			if not checkArg(1,ret[1],"number") then return end
 			local fd = ret[1]
 			if hndls[fd] == nil then
 				sendData("{nil, \"bad file descriptor\"}")
@@ -254,6 +281,8 @@ local function update()
 				sendData("{}")
 			end
 		elseif ctrl == 10 then -- rename
+			if not checkArg(1,ret[1],"string") then return end
+			if not checkArg(2,ret[2],"string") then return end
 			if change then
 				sendData("{" .. tostring(os.rename(sanitizePath(ret[1]),sanitizePath(ret[2])) == true) .. "}")
 			else
@@ -262,6 +291,7 @@ local function update()
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
+			if not checkArg(1,ret[1],"string") then return end
 			sendData("{" .. tostring(lfs.attributes(sanitizePath(ret[1]),"mode") ~= nil) .. "}")
 		elseif ctrl == 13 then -- getLabel
 			sendData("{\"" .. label .. "\"}")
@@ -269,12 +299,14 @@ local function update()
 			-- TODO: Need to update this
 			sendData("{" .. curspace .. "}")
 		elseif ctrl == 15 then -- makeDirectory
+			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				sendData("{" .. tostring(lfs.mkdir(sanitizePath(ret[1]))) .. "}")
 			else
 				sendData("{false}")
 			end
 		elseif ctrl == 16 then -- list
+			if not checkArg(1,ret[1],"string") then return end
 			ret[1] = sanitizePath(ret[1])
 			local list = getDirectoryItems(ret[1])
 			local out = ""
@@ -289,6 +321,8 @@ local function update()
 			end
 			sendData("{{" .. out .. "}}")
 		elseif ctrl == 17 then -- write
+			if not checkArg(1,ret[1],"number") then return end
+			if not checkArg(2,ret[2],"string") then return end
 			local fd = ret[1]
 			if hndls[fd] == nil then
 				sendData("{nil, \"bad file descriptor\"}")
@@ -298,6 +332,7 @@ local function update()
 			end
 		elseif ctrl == 18 then -- remove
 			-- TODO: Recursive remove
+			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				if lfs.attributes(sanitizePath(ret[1]),"mode") == "directory" then
 					sendData("{" .. tostring(lfs.rmdir(sanitizePath(ret[1]))) .. "}")
