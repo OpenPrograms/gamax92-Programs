@@ -113,16 +113,10 @@ function unserialize(str)
 		local i = 1
 		local gen = {}
 		local block = str:sub(2,-2) .. ","
-		local str = false
 		local piece = ""
-		local last
-		for chr in block:gmatch(".") do
-			if str then
-				if chr == "\"" and last ~= "\\" then
-					str = false
-				end
-				piece = piece .. chr
-			elseif chr == "," then
+		for part in block:gmatch("(.-),") do
+			piece = piece .. part
+			if (piece:sub(1,1) == "\"" and piece:sub(-1,-1) == "\"") or piece:sub(1,1) ~= "\"" then
 				if piece:find("^%[.-%]=.*") then
 					local key, value = piece:match("^%[(.-)%]=(.*)")
 					gen[unserialize(key)] = unserialize(value)
@@ -131,13 +125,10 @@ function unserialize(str)
 					i = i + 1
 				end
 				piece = ""
-			else
-				if chr == "\"" then
-					str = true
-				end
-				piece = piece .. chr
 			end
-			last = chr
+		end
+		if piece ~= "" then
+			error("Cannot unserialize " .. piece,2)
 		end
 		return gen
 	elseif str:sub(1,1) == "\"" and str:sub(-1,-1) == "\"" then -- string
