@@ -195,7 +195,11 @@ while true do
 				sendData("{}")
 			end
 		elseif ctrl == 10 then -- rename
-			sendData("{" .. tostring(os.rename(sanitizePath(ret[1]),sanitizePath(ret[2])) == true) .. "}")
+			if change then
+				sendData("{" .. tostring(os.rename(sanitizePath(ret[1]),sanitizePath(ret[2])) == true) .. "}")
+			else
+				sendData("{false}")
+			end
 		elseif ctrl == 11 then -- isReadOnly
 			sendData("{" .. tostring(not change) .. "}")
 		elseif ctrl == 12 then -- exists
