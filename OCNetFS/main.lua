@@ -94,6 +94,8 @@ function unserialize(str)
 					i = i + 1
 				end
 				piece = ""
+			else
+				piece = piece .. ","
 			end
 		end
 		if piece ~= "" then
