@@ -52,7 +52,12 @@ local function getData()
 	elseif line:sub(1,1) ~= "{" then
 		error(line,3)
 	else
-		return load("return " .. line)()
+		local fn, err = load("return " .. line,"ocnetfs-server","t",{math={huge=math.huge}})
+		if fn then
+			return fn()
+		else
+			return nil, err
+		end
 	end
 end
 
