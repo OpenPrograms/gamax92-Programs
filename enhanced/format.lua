@@ -30,7 +30,7 @@ function format.tabulate(input, justify)
 		for i, value in ipairs(entry) do
 			if (justify[i] or 0) == 0 then
 				entry[i] = format.padStringLeft(tostring(entry[i]), tabsize[i])
-			else
+			elseif justify[i] == 1 then
 				entry[i] = format.padStringRight(tostring(entry[i]), tabsize[i])
 			end
 		end

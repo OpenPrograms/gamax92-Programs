@@ -1,10 +1,13 @@
 local fs = require("filesystem")
 local shell = require("shell")
 
+local format = require("format")
+
 local args, options = shell.parse(...)
 
 local operation, filename, label, file
-local verbose = false
+local verbose, zblock = false, false
+local cblock = 0
 
 -- TODO: This usage is bland.
 local usage =
@@ -91,9 +94,9 @@ local function openFile(mode)
 	local err
 	if filename then
 		if mode == "r" then
-			file, err = io.open(filename,"rb")
+			file, err = io.open(shell.resolve(filename),"rb")
 		else
-			file, err = io.open(filename,"wb")
+			file, err = io.open(shell.resolve(filename),"wb")
 		end
 	else
 		if mode == "r" then
@@ -117,7 +120,7 @@ local function decodeBlock(block)
 	info.size =   tonumber(block:sub(125,136):match("(.-)[%z ]") or "0",8)
 	info.time =   tonumber(block:sub(137,148):match("(.-)[%z ]"),8)
 	info.chksum = tonumber(block:sub(149,156):match("(.-)[%z ]"),8)
-	info.type =   block:sub(157,157):match("(.-)%z")
+	info.type =   block:sub(157,157)
 	info.lname =  block:sub(158,257):match("(.-)%z")
 	info.ustar =  block:sub(258,263)
 	info.ver =    block:sub(264,265):match("(.-)%z")
@@ -128,7 +131,9 @@ local function decodeBlock(block)
 	info.prefix = block:sub(346,500):match("(.-)%z")
 	
 	-- Patches
+	info.mode = info.mode or 0
 	info.size = info.size or 0
+	info.type = info.type
 	
 	-- Ustar patches
 	if info.ustar == "ustar " then
@@ -137,6 +142,9 @@ local function decodeBlock(block)
 		info.filename = info.name
 		info.uname = "ocuser"
 		info.gname = "ocuser"
+		if info.filename:sub(-1,-1) == "/" then
+			info.type = "5"
+		end
 	end
 	
 	return info
@@ -159,24 +167,131 @@ elseif operation == "r" then
 	print("tar: Operation 'append' unimplemented.")
 elseif operation == "t" then
 	openFile("r")
+	local toformat = {}
+	local map = {
+		["0"]="-",
+		["1"]="h",
+		["2"]="l",
+		["3"]="c",
+		["4"]="b",
+		["5"]="d",
+		["6"]="p",
+		["7"]="C",
+		["V"]="V",
+	}
 	while true do
 		local block = file:read(512)
 		if block == nil then break end
-		local info = decodeBlock(block)
-		if verbose then
-			print(info.filename)
+		cblock = cblock + 1
+		if block == zeroblock then
+			if zblock then
+				zblock = false
+				break
+			else
+				zblock = true
+			end
 		else
-			print(info.filename)
+			if zblock then
+				print("tar: A lone zero block at " .. cblock - 1)
+				zblock = false
+			end
+			local info = decodeBlock(block)
+			if verbose then
+				local mode = map[info.type] or "?"
+				for i = 8, 0, -1 do
+					local bit = math.floor(info.mode / (2^i))%2
+					mode = mode .. (bit == 1 and (i%3 == 0 and "x" or (i%3 == 1 and "w" or "r")) or "-")
+				end
+				local date = os.date("%Y-%m-%d %H:%M", info.time)
+				table.insert(toformat, {mode, info.uname .. "/" .. info.gname, info.size, date, info.filename .. (info.type == "V" and "--Volume Header--" or "")})
+			else
+				print(info.filename)
+			end
+			local blocks = math.ceil(info.size / 512)
+			if blocks > 0 then
+				cblock = cblock + blocks
+				file:seek("cur",blocks * 512)
+			end
 		end
-		local blocks = math.ceil(info.size / 512)
-		if blocks > 0 then
-			file:seek("cur",blocks * 512)
+	end
+	if verbose then
+		format.tabulate(toformat, {0,0,1,0,2})
+		for j, entry in ipairs(toformat) do
+			for i = 1, 5 do
+				io.write(entry[i])
+				if i < 5 then
+					io.write(" ")
+				end
+			end
+			io.write("\n")
 		end
+	end
+	if zblock then
+		print("tar: Archive ends in a lone zero block")
+		zblock = false
 	end
 elseif operation == "tl" then
 	print("tar: Operation 'test-label' unimplemented.")
 elseif operation == "u" then
 	print("tar: Operation 'update' unimplemented.")
 elseif operation == "x" then
-	print("tar: Operation 'extract' unimplemented.")
+	openFile("r")
+	while true do
+		local block = file:read(512)
+		if block == nil then break end
+		cblock = cblock + 1
+		if block == zeroblock then
+			if zblock then
+				zblock = false
+				break
+			else
+				zblock = true
+			end
+		else
+			if zblock then
+				print("tar: A lone zero block at " .. cblock - 1)
+				zblock = false
+			end
+			local info = decodeBlock(block)
+			local blocks = math.ceil(info.size / 512)
+			if verbose then
+				print(info.filename)
+			end
+			if info.type == "0" then
+				local ofile,err = io.open(shell.resolve(info.filename),"wb")
+				if ofile then
+					for i = 1,blocks do
+						local block = file:read(512)
+						local get = math.min(512, info.size - (i - 1)*512)
+						ofile:write(block:sub(1,get))
+					end
+					ofile:close()
+				else
+					print("tar: Failed to open " .. info.filename .. ": " .. err)
+					if blocks > 0 then
+						file:seek("cur",blocks * 512)
+					end
+				end
+			elseif info.type == "1" or info.type == "2" then
+				local stat, err = fs.link(shell.resolve(info.lname), shell.resolve(info.filename))
+				if not stat then
+					print("tar: Failed to link " .. info.filename .. ": " .. err)
+				end
+			elseif info.type == "5" then
+				local stat, err = fs.makeDirectory(shell.resolve(info.filename))
+				if not stat then
+					print("tar: Failed to create " .. info.filename .. ": " .. err)
+				end
+			else
+				print("tar: Not extracting " .. info.filename .. " of type " .. info.type)
+			end
+			if blocks > 0 then
+				cblock = cblock + blocks
+			end
+		end
+	end
+	if zblock then
+		print("tar: Archive ends in a lone zero block")
+		zblock = false
+	end
 end
