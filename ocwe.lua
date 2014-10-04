@@ -11,6 +11,7 @@ while true do
 	local health,err = component.debug.getPlayer(player).getHealth()
 	if not health or err == "player is offline" then
 		print("No such player")
+		io.stdout:write("Input player name: ")
 	else
 		print("Bound OCWE to " .. player)
 		player = component.debug.getPlayer(player)
@@ -22,9 +23,23 @@ local world = component.debug.getWorld()
 
 local info = {}
 
+local function decodeBlock(block)
+	if block:match(".*:.+") then
+		local id,damage = block:match("(.*):(.+)")
+		if tonumber(id) ~= nil and tonumber(damage) ~= nil then
+			return tonumber(id), tonumber(damage)
+		end
+	else
+		if tonumber(block) ~= nil then
+			return tonumber(block), 0
+		end
+	end
+end
+
 while true do
 	io.stdout:write("> ")
 	local line = io.read()
+	if not line then break end
 	local parse = {}
 	for item in (line .. " "):gmatch("(.-) ") do
 		if item ~= "" then
@@ -69,12 +84,12 @@ while true do
 			print("Set pos2 to (" .. pX .. "," .. pY .. "," .. pZ .. ")" .. (size and (" (" .. size .. " blocks)") or ""))
 		end
 	elseif parse[1] == "set" then
-		parse[3] = parse[3] or "0"
-		if not tonumber(parse[2]) or not tonumber(parse[3]) then
-			print("Invalid argument, Expected: set ID [damage]")
+		local id, damage = decodeBlock(parse[2])
+		if parse[2] == nil then
+			print("Invalid argument, Expected: set block")
+		elseif not id or not damage then
+			print("Invalid block code")
 		else
-			local id = tonumber(parse[2])
-			local damage = tonumber(parse[2])
 			if not info.pos1 then
 				print("Please set pos1")
 			elseif not info.pos2 then
@@ -85,19 +100,49 @@ while true do
 				world.setBlocks(info.pos1[1],info.pos1[2],info.pos1[3],info.pos2[1],info.pos2[2],info.pos2[3],id,damage)
 			end
 		end
-	elseif parse[1] == "walls" then
-		parse[3] = parse[3] or "0"
-		if not tonumber(parse[2]) or not tonumber(parse[3]) then
-			print("Invalid argument, Expected: set ID [damage]")
+	elseif parse[1] == "replace" then
+		local fid, fdamage = decodeBlock(parse[2])
+		local tid, tdamage = decodeBlock(parse[3])
+		if parse[2] == nil or parse[3] == nil then
+			print("Invalid argument, Expected: replace from-block to-block")
+		elseif not fid or not fdamage then
+			print("Invalid from-block code")
+		elseif not tid or not tdamage then
+			print("Invalid to-block code")
 		else
-			local id = tonumber(parse[2])
-			local damage = tonumber(parse[2])
+			local blocks = 0
+			
+			local x1,x2 = math.min(info.pos1[1],info.pos2[1]),math.max(info.pos1[1],info.pos2[1])
+			local y1,y2 = math.min(info.pos1[2],info.pos2[2]),math.max(info.pos1[2],info.pos2[2])
+			local z1,z2 = math.min(info.pos1[3],info.pos2[3]),math.max(info.pos1[3],info.pos2[3])
+			
+			for y = y1,y2 do
+				for x = x1,x2 do
+					for z = z1,z2 do
+						local cid = world.getBlockId(x,y,z)
+						local cdamage = world.getMetadata(x,y,z)
+						if cid == fid and cdamage == fdamage then
+							world.setBlock(x,y,z,tid,tdamage)
+							blocks = blocks + 1
+						end
+					end
+				end
+			end
+			print("Replaced " .. blocks .. " block" .. (blocks == 1 and "" or "s"))
+		end
+	elseif parse[1] == "walls" then
+		local id, damage = decodeBlock(parse[2])
+		if parse[2] == nil then
+			print("Invalid argument, Expected: walls block")
+		elseif not id or not damage then
+			print("Invalid block code")
+		else
 			if not info.pos1 then
 				print("Please set pos1")
 			elseif not info.pos2 then
 				print("Please set pos2")
 			else
-				local size = ((math.abs(info.pos1[2]-info.pos2[2])+1) * (math.abs(info.pos1[3]-info.pos2[3])+1) * 2) + ((math.abs(info.pos1[1]-info.pos2[1])+1) * (math.abs(info.pos1[2]-info.pos2[2])-1) * 2)
+				local size = "NaN" -- >_> why is this confusing.
 				print("Setting " .. size .. " block" .. (size == 1 and "" or "s"))
 				world.setBlocks(info.pos1[1],info.pos1[2],info.pos1[3],info.pos1[1],info.pos2[2],info.pos2[3],id,damage)
 				world.setBlocks(info.pos2[1],info.pos1[2],info.pos1[3],info.pos2[1],info.pos2[2],info.pos2[3],id,damage)
