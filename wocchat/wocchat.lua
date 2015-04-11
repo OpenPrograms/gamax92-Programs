@@ -19,12 +19,14 @@ local computer = require("computer")
 local event = require("event")
 local internet = require("internet")
 local shell = require("shell")
+local term = require("term")
 local text = require("text")
 local unicode = require("unicode")
+local bit32 = require("bit32")
 
 local args, options = shell.parse(...)
 
-local config,blocks = {},{active=1,{type="main",name="WocChat",text={}}}
+local config,blocks,persist = {},{{type="main",name="WocChat",text={{"*","Welcome to WocChat!"}}},active=1},{}
 local screen,theme,lastbg,lastfg
 
 function setBackground(bg)
@@ -57,6 +59,7 @@ function saveScreen()
 			screen.cbg[screen[y][x][3] .. "_" .. tostring(screen[y][x][5])] = true
 		end
 	end
+	screen.cursor = { term.getCursor() }
 end
 
 function restoreScreen()
@@ -97,6 +100,7 @@ function restoreScreen()
 	end
 	gpu.setBackground(table.unpack(screen.bg))
 	gpu.setForeground(table.unpack(screen.fg))
+	term.setCursor(table.unpack(screen.cursor))
 end
 
 function loadConfig()
@@ -130,7 +134,23 @@ function loadConfig()
 			end
 		end
 	end
-	theme=config[config.theme.theme .. ".theme"]
+	theme=setmetatable({},{__index=function(_,k)
+		local theme = config.theme.theme .. ".theme"
+		if config[theme][k] then
+			return config[theme][k]
+		elseif config[theme].parent ~= nil then
+			return config[config[theme].parent .. ".theme"][k]
+		end
+	end})
+end
+
+function simpleHash(str)
+	local v = 0
+	for char in str:gmatch(".") do
+		v = bit32.lshift(v,5) + bit32.rshift(v,27)
+		v = bit32.bxor(v,char:byte())
+	end
+	return v
 end
 
 function drawTree(width)
@@ -144,12 +164,12 @@ function drawTree(width)
 			gpu.set(2,y,"WocChat")
 		elseif block.type == "server" then
 			setForeground(theme.tree.group.color)
-			gpu.set(2,y,block.name)
+			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.name)
 			setForeground(theme.tree.group.prefix.color)
 			gpu.set(1,y,theme.tree.group.prefix.str)
 		elseif block.type == "channel" then
 			setForeground(theme.tree.entry.color)
-			gpu.set(2,y,block.name)
+			gpu.set(unicode.wlen(theme.tree.entry.prefix.str)+1,y,block.name)
 			setForeground(theme.tree.entry.prefix.color)
 			local siblings = blocks[block.parent].children
 			if i == siblings[#siblings] then
@@ -175,30 +195,80 @@ function drawList(width,names)
 	end
 end
 
-function drawWindow(x,width,height,text)
+function drawWindow(x,width,height,irctext)
 	setBackground(theme.window.color)
 	gpu.fill(x,2,width,height," ")
-	-- This needs text wrapping, just for demostration
 	local nickwidth = 0
-	for i = 1,#text do
-		nickwidth=math.max(nickwidth,#text[i][1])
+	for i = 1,#irctext do
+		nickwidth=math.max(nickwidth,#irctext[i][1])
 	end
-	for i = 1,#text do
-		setForeground(theme.window.nick.color)
-		gpu.set(x,i+1,text[i][1])
-		setForeground(theme.window.divider.color)
-		gpu.set(x+nickwidth,i+1,"|")
-		setForeground(theme.window.text.color)
-		gpu.set(x+nickwidth+1,i+1,text[i][2])
+	local textwidth = width-nickwidth-1
+	local buffer = {}
+	for i = 1,#irctext do
+		local first = true
+		for part in text.wrappedLines(irctext[i][2],textwidth,textwidth) do
+			if first then
+				buffer[#buffer+1] = {irctext[i][1],part,irctext[i][3]}
+				first = false
+			else
+				buffer[#buffer+1] = {"",part,irctext[i][3]}
+			end
+		end
+		while #buffer > height do
+			table.remove(buffer,1)
+		end
+	end
+	setForeground(theme.window.divider.color)
+	gpu.fill(x+nickwidth,2,1,height,theme.window.divider.str)
+	local nickcolors
+	if type(theme.window.nick.color) == "number" then
+		nickcolors = theme.window.nick.color
+	else
+		nickcolors = {}
+		for part in (theme.window.nick.color .. ","):gmatch("(.-),") do
+			nickcolors[#nickcolors+1] = tonumber(part)
+		end
+	end
+	for i = 1,#buffer do
+		if buffer[i][1] ~= "" then
+			if type(nickcolors) == "number" then
+				setForeground(nickcolors)
+			else
+				setForeground(nickcolors[simpleHash(buffer[i][1])%#nickcolors+1])
+			end
+			gpu.set(x+nickwidth-unicode.wlen(buffer[i][1]),i+1,buffer[i][1])
+		end
+		setForeground(buffer[i][3] or theme.window.text.color)
+		gpu.set(x+nickwidth+1,i+1,buffer[i][2])
 	end
 end
 
-function drawText(x,y,width,text)
+function drawTextbar(x,y,width,text)
 	setBackground(theme.textbar.color)
 	gpu.fill(x,y,width,1," ")
-	setForeground(theme.textbar.text.color)
-	gpu.set(x,y,text)
+	if text ~= "" then
+		setForeground(theme.textbar.text.color)
+		gpu.set(x,y,text)
+	end
 end
+
+local customGPU = {
+	gpuSetup = function(self, x,y,width,height)
+		self.x=x
+		self.y=y
+		self.width=width
+		self.height=height
+		if self.gpu == nil then
+			self.gpu = {
+				set = function(x,y,s,v) return gpu.set(x+self.x-1,y+self.y-1,s,v ~= nil and v) end,
+				get = function(x,y) return gpu.get(x+self.x-1,y+self.y-1) end,
+				getResolution = function() return self.width, self.height end,
+				copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+self.x-1,y+self.y-1,w,h,tx,ty) end end,
+				fill = function(x,y,w,h,c) return gpu.fill(x+self.x-1,y+self.y-1,w,h,c) end,
+			}
+		end
+	end
+}
 
 function redraw()
 	if config.wocchat.usetree then
@@ -231,13 +301,17 @@ function redraw()
 			setForeground(theme.textbar.color)
 			gpu.set(screen.width-listwidth,screen.height,"▌")
 			gpu.set(screen.width-listwidth,1,"▌")
-			drawText(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].title)
+			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].title)
 		else
-			drawText(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].name .. " Main Window")
+			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].name .. " Main Window")
 		end
-		drawText(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,blocks.text)
 		drawWindow(treewidth+2,screen.width-treewidth-listwidth-2,screen.height-2,blocks[blocks.active].text)
+		drawTextbar(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,"")
+		customGPU:gpuSetup(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,1)
+		persist.window_width = screen.width-treewidth-listwidth-2
+		persist.window_x = treewidth+2
 	else
+		
 	end
 end
 
@@ -246,27 +320,62 @@ function main()
 	loadConfig()
 	print("Saving screen ...")
 	saveScreen()
+	gpu.setForeground(0xFFFFFF)
+	gpu.setBackground(0)
 	gpu.fill(1,1,screen.width,screen.height," ")
+	gpu.set(screen.width/2-15,screen.height/2,"Loading theme, please wait ...")
 	local i=0
 	while theme[i] ~= nil do
 		gpu.setPaletteColor(i,theme[i])
 		i=i+1
 	end
+	term.setCursor(1,1)
 	blocks = {
 		{type="main",name="WocChat",text={}},
 		{type="server",name="EsperNet",text={},children={3,4}},
 		{type="channel",name="#oc",title="OpenComputers! Home of the garbage scala code",text={{"Temia","moo?"},{"gamax92","yay"},{"*","rashy waves at Temia"}},names={"Nobody","Important"},parent=2},
 		{type="channel",name="#oc_again",title="Extra Channel for testing",text={},names={"Useless","People"},parent=2},
 		active=3,
-		nick="gamax92",
-		text="/me wonders what I'm even doing ..."
 	}
 	redraw()
-	os.sleep(10)
+	local history = {}
+	while true do
+		setBackground(theme.textbar.color)
+		setForeground(theme.textbar.text.color)
+		local line = term.read(history)
+		if line ~= nil then line = text.trim(line) end
+		if line == "/quit" then break end
+		if line == "/redraw" then
+			loadConfig()
+			redraw()
+		end
+		local text = blocks[blocks.active].text
+		text[#text+1] = {"Guest" .. math.random(1000,99999),line}
+		if config.wocchat.usetree then
+			drawWindow(persist.window_x,persist.window_width,screen.height-2,text)
+		else
+		end
+	end
+	--os.sleep(10)
 end
 
+-- Hijack needed for term.read
+local old_getPrimary = component.getPrimary
+function component.getPrimary(componentType)
+	checkArg(1, componentType, "string")
+	assert(component.isAvailable(componentType), "no primary '" .. componentType .. "' available")
+	if componentType == "gpu" then
+		return customGPU.gpu or old_getPrimary(componentType)
+	end
+	return old_getPrimary(componentType)
+end
 local stat, err = xpcall(main,debug.traceback)
+component.getPrimary = old_getPrimary
 if screen then
+	gpu.setForeground(0xFFFFFF)
+	gpu.setBackground(0)
+	gpu.fill(1,1,screen.width,screen.height," ")
+	gpu.set(screen.width/2-17,screen.height/2,"Restoring screen, please wait ...")
 	restoreScreen()
 end
 if not stat then
