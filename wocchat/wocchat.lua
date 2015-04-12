@@ -31,21 +31,21 @@ local args, options = shell.parse(...)
 local config,blocks,persist = {},{{type="main",name="WocChat",text={{"*","Welcome to WocChat!"}}},active=1},{}
 local screen,theme,lastbg,lastfg
 
-function setBackground(bg)
+local function setBackground(bg)
 	if bg ~= lastbg then
 		gpu.setBackground(bg,true)
 		lastbg = bg
 	end
 end
 
-function setForeground(fg)
+local function setForeground(fg)
 	if fg ~= lastfg then
 		gpu.setForeground(fg,true)
 		lastfg = fg
 	end
 end
 
-function saveScreen()
+local function saveScreen()
 	local width,height = gpu.getResolution()
 	screen = {palette={},cfg={},cbg={},width=width,height=height}
 	for i = 0,15 do
@@ -64,7 +64,7 @@ function saveScreen()
 	screen.cursor = { term.getCursor() }
 end
 
-function restoreScreen()
+local function restoreScreen()
 	gpu.setForeground(0xFFFFFF)
 	gpu.setBackground(0)
 	gpu.fill(1,1,screen.width,screen.height," ")
@@ -110,7 +110,7 @@ function restoreScreen()
 	term.setCursor(table.unpack(screen.cursor))
 end
 
-function loadConfig()
+local function loadConfig()
 	local section
 	config = {}
 	for line in io.lines("/etc/wocchat.cfg") do
@@ -151,7 +151,7 @@ function loadConfig()
 	end})
 end
 
-function simpleHash(str)
+local function simpleHash(str)
 	local v = 0
 	for char in str:gmatch(".") do
 		v = bit32.lshift(v,5) + bit32.rshift(v,27)
@@ -171,7 +171,7 @@ local default_support = {
 	PREFIX="(ov)@+",
 }
 
-function drawTree(width)
+local function drawTree(width)
 	setBackground(theme.tree.color)
 	gpu.fill(1,1,width,screen.height," ")
 	local y = 1
@@ -184,13 +184,13 @@ function drawTree(width)
 		if block.type == "main" then
 			setForeground(theme.tree.group.color)
 			gpu.set(2,y,"WocChat")
-		elseif block.type == "server" then
-			setForeground(theme.tree.group.color)
+		elseif block.type == "server" or block.type == "dead_server" then
+			setForeground(block.type == "server" and theme.tree.group.color or theme.tree.dead.color)
 			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.support.NETWORK or block.name)
 			setForeground(theme.tree.group.prefix.color)
 			gpu.set(1,y,theme.tree.group.prefix.str)
-		elseif block.type == "channel" then
-			setForeground(theme.tree.entry.color)
+		elseif block.type == "channel" or block.type == "dead_channel" then
+			setForeground(block.type == "channel" and theme.tree.entry.color or theme.tree.dead.color)
 			gpu.set(unicode.wlen(theme.tree.entry.prefix.str)+1,y,block.name)
 			setForeground(theme.tree.entry.prefix.color)
 			local siblings = block.parent.children
@@ -207,10 +207,14 @@ function drawTree(width)
 	end
 end
 
-function drawTabs()
+local function drawTabs()
 end
 
-function drawList(width,names)
+local scroll_chars = {"█","▇","▆","▅","▄","▃","▂","▁"}
+
+local function drawList(width)
+	local block = blocks[blocks.active]
+	local names = block.names
 	setBackground(theme.window.color)
 	gpu.fill(screen.width,1,1,screen.height," ")
 	setBackground(theme.tree.color)
@@ -219,16 +223,25 @@ function drawList(width,names)
 	setForeground(theme.tree.group.color)
 	local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
 	prefix = prefix:match("%)(.*)")
-	for y = 1,#names do
+	block.scroll = math.max(math.min(block.scroll,#names-screen.height+1),1)
+	for y = block.scroll,#names do
 		if names[y]:find("^[" .. prefix .. "]") then
-			gpu.set(x,y,names[y])
+			gpu.set(x,y-block.scroll+1,names[y])
 		else
-			gpu.set(x+1,y,names[y])
+			gpu.set(x+1,y-block.scroll+1,names[y])
 		end
 	end
+	local pos = (block.scroll-1)/(#names-screen.height)*(screen.height-1)+1
+	local ipos = math.floor((pos % 1)*8)+1
+	setForeground(theme.tree.active.color)
+	setBackground(theme.window.color)
+	gpu.set(screen.width,pos,scroll_chars[ipos])
+	setBackground(theme.tree.active.color)
+	setForeground(theme.window.color)
+	gpu.set(screen.width,pos+1,scroll_chars[ipos])
 end
 
-function drawWindow(x,width,height,irctext)
+local function drawWindow(x,width,height,irctext)
 	setBackground(theme.window.color)
 	gpu.fill(x,2,width,height," ")
 	local nickwidth = 0
@@ -276,7 +289,7 @@ function drawWindow(x,width,height,irctext)
 	end
 end
 
-function drawTextbar(x,y,width,text)
+local function drawTextbar(x,y,width,text)
 	setBackground(theme.textbar.color)
 	gpu.fill(x,y,width,1," ")
 	if text ~= "" then
@@ -303,18 +316,23 @@ local customGPU = {
 	end
 }
 
-function redraw(first)
+local function _redraw(first)
 	if config.wocchat.usetree then
 		local treewidth = persist.treewidth
 		if dirty.blocks then
 			treewidth = 8
 			for i = 1,#blocks do
 				local block = blocks[i]
-				if block.type == "server" then
+				if block.type == "server" or block.type == "dead_server" then
 					treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. (block.support.NETWORK or block.name)))
-				elseif block.type == "channel" then
+				elseif block.type == "channel" or block.type == "dead_channel" then
 					treewidth=math.max(treewidth,unicode.len(theme.tree.entry.prefix.str .. block.name))
 				end
+			end
+			if treewidth ~= persist.treewidth and not first then
+				local old = screen.width-persist.treewidth-persist.listwidth-2
+				local new = screen.width-treewidth-persist.listwidth-2
+				gpu.copy(persist.treewidth+2,screen.height,math.min(new,old),1,old - new,0)
 			end
 			drawTree(treewidth)
 			dirty.blocks = false
@@ -340,7 +358,7 @@ function redraw(first)
 					listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[" .. prefix .. "]") and 0 or 1))
 				end
 				listwidth=listwidth+1
-				drawList(listwidth,names)
+				drawList(listwidth)
 			end
 			dirty.nicks = false
 		end
@@ -385,6 +403,29 @@ function redraw(first)
 	setBackground(theme.textbar.color)
 	setForeground(theme.textbar.text.color)
 end
+local redrawHang = false
+local function redraw(first)
+	if not redrawHang then
+		local ok, err = xpcall(_redraw, debug.traceback, first)
+		if not ok then
+			redrawHang = true
+			gpu.setPaletteColor(0,0xFF0000)
+			gpu.setForeground(0xFF0000)
+			gpu.setBackground(0)
+			if config.wocchat.usetree then
+				gpu.fill(1,1,screen.width,screen.height-1," ")
+			else
+			end
+			gpu.set(1,1,"Rendering error!")
+			local y = 3
+			err = text.detab(err) .. "\n"
+			for line in err:gmatch("(.-)\n") do
+				gpu.set(1,y,line)
+				y=y+1
+			end
+		end
+	end
+end
 
 local helper = {}
 function helper.write(sock,msg)
@@ -425,10 +466,20 @@ function helper.joinServer(server)
 	helper.markDirty("blocks","window","nicks","title")
 end
 function helper.joinChannel(block,channel)
-	local cblock = {type="channel",name=channel,text={},title="",names={},parent=block}
+	local cblock = {type="channel",name=channel,text={},title="",names={},parent=block,scroll=1}
+	local look = block
+	if #block.children > 0 then
+		look = block.children[#block.children]
+	end
+	for i = 1,#blocks do
+		if blocks[i] == look then
+			table.insert(blocks,i+1,cblock)
+			look = i+1
+			break
+		end
+	end
 	block.children[#block.children+1] = cblock
-	blocks[#blocks + 1] = cblock
-	blocks.active = #blocks
+	blocks.active = look
 	helper.markDirty("blocks","window","nicks","title")
 end
 function helper.findChannel(block,channel)
@@ -462,10 +513,9 @@ function helper.sortList(block)
 	end)
 end
 
--- utility method for reply tracking tables.
-function autocreate(table, key)
-  table[key] = {}
-  return table[key]
+local function autocreate(table, key)
+	table[key] = {}
+	return table[key]
 end
 
 local function name(identity)
@@ -819,7 +869,7 @@ local function handleCommand(block, prefix, command, args, message)
 		cblock.names = names[channel]
 		helper.sortList(cblock)
 		if blocks[blocks.active] == cblock then
-			dirty.names = true
+			dirty.nicks = true
 		end
 		names[channel] = nil
 	elseif command == replies.RPL_MOTDSTART then
@@ -936,8 +986,26 @@ function commands.me(args,opts)
 		end
 	end
 end
+function commands.redraw(args,opts)
+	if #args == 0 then
+		helper.markDirty("blocks","window","nicks","title")
+	else
+		local good = true
+		for i = 1,#args do
+			if args[i] ~= "blocks" and args[i] ~= "window" and args[i] ~= "nicks" and args[i] ~= "title" then
+				helper.addText("","Invalid type '" .. args[i] .. "'",theme.actions.error.color)
+				good = false
+			end
+		end
+		if not good then return end
+		for i = 1,#args do
+			dirty[args[i]] = true
+		end
+	end
+	redraw()
+end
 
-function main()
+local function main()
 	print("Loading config ...")
 	loadConfig()
 	if config.wocchat.default_nick == nil then
@@ -959,16 +1027,24 @@ function main()
 	end
 	term.setCursor(1,1)
 	function persist.mouse(event, addr, x, y, button)
-		if config.wocchat.usetree then
-			if y <= #blocks and x <= persist.window_x-2 and y ~= blocks.active then
-				blocks.active = y
-				helper.markDirty("blocks","window","nicks","title")
-				redraw()
+		if event == "touch" then
+			if config.wocchat.usetree then
+				if y <= #blocks and x <= persist.window_x-2 and y ~= blocks.active then
+					blocks.active = y
+					helper.markDirty("blocks","window","nicks","title")
+					redraw()
+				end
+			else
 			end
-		else
+		elseif event == "scroll" then
+			if x > screen.width-persist.listwidth then
+				blocks[blocks.active].scroll = blocks[blocks.active].scroll - button
+				dirty.nicks = true
+			end
 		end
 	end
 	event.listen("touch",persist.mouse)
+	event.listen("scroll",persist.mouse)
 	persist.timer = event.timer(0.5, function()
 		for i = 1,#blocks do
 			local block = blocks[i]
@@ -981,6 +1057,14 @@ function main()
 							helper.addTextToBlock(block,"*","Connection lost.")
 							pcall(sock.close, sock)
 							block.sock = nil
+							block.type = "dead_" .. block.type
+							for j=1,#block.children do
+								block.children[j].type = "dead_" .. block.children[j].type
+							end
+							dirty.blocks = true
+							if blocks[blocks.active] == block then
+								dirty.window = true
+							end
 							break
 						end
 						line = text.trim(line) -- get rid of trailing \r
@@ -1019,6 +1103,9 @@ function main()
 	end
 	local history = {}
 	while true do
+		if dirty.blocks or dirty.title or dirty.window or dirty.nicks then
+			redraw()
+		end
 		setBackground(theme.textbar.color)
 		setForeground(theme.textbar.text.color)
 		local line = term.read(history)
@@ -1061,6 +1148,7 @@ for i = 1,#blocks do
 end
 if persist.mouse then
 	event.ignore("touch",persist.mouse)
+	event.ignore("scroll",persist.mouse)
 end
 if persist.timer then
 	event.cancel(persist.timer)
