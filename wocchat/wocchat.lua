@@ -29,19 +29,21 @@ local bit32 = require("bit32")
 local args, options = shell.parse(...)
 
 local config,blocks,persist = {},{{type="main",name="WocChat",text={{"*","Welcome to WocChat!"}}},active=1},{}
-local screen,theme,lastbg,lastfg
+local screen,theme,lastbg,lastbgp,lastfg,lastfgp
 
-local function setBackground(bg)
-	if bg ~= lastbg then
-		gpu.setBackground(bg,true)
+local function setBackground(bg, pal)
+	if bg ~= lastbg or pal ~= lastbgp then
+		gpu.setBackground(bg,not pal)
 		lastbg = bg
+		lastbgp = pal
 	end
 end
 
-local function setForeground(fg)
-	if fg ~= lastfg then
-		gpu.setForeground(fg,true)
+local function setForeground(fg, pal)
+	if fg ~= lastfg or pal ~= lastfgp then
+		gpu.setForeground(fg,not pal)
 		lastfg = fg
+		lastfgp = pal
 	end
 end
 
@@ -119,6 +121,7 @@ local function loadConfig()
 			config[section] = {}
 		elseif line ~= "" then
 			local key,value = line:match("(.-)=(.*)")
+			key,value = text.trim(key),text.trim(value)
 			key = section .. "\0" .. key:gsub("%.","\0")
 			path,name=key:match("(.+)%z(.+)")
 			local v = config
@@ -241,6 +244,62 @@ local function drawList(width)
 	gpu.set(screen.width,pos+1,scroll_chars[ipos])
 end
 
+local function colorChunker(ostr,kill)
+	local chunks = {}
+	while ostr:find("[\3\15]") do
+		local part,str
+		part,str,ostr = ostr:match("(.-)([\3\15])(.*)")
+		if part ~= "" then
+			chunks[#chunks+1] = part
+		end
+		if str == "\3" then
+			for char in ostr:gmatch(".") do
+				if char:find("[^%d,]") or (str:find(",",nil,true) and char == ",") or #str >= 6 or (#str == 3 and not str:find(",",nil,true) and char ~= ",") or (#str == 1 and char == ",") then
+					if not kill then
+						chunks[#chunks+1] = str
+					end
+					ostr = ostr:sub(#str)
+					break
+				else
+					str = str .. char
+				end
+			end
+		else
+			if not kill then
+				chunks[#chunks+1] = str
+			end
+		end
+	end
+	chunks[#chunks+1] = ostr
+	return chunks
+end
+
+local function basicWrap(line,width)
+	local broken = ""
+	local clean = table.concat(colorChunker(line,true),"")
+	for part in text.wrappedLines(clean,width,width) do
+		broken = broken .. part .. "\n"
+	end
+	local new = ""
+	local bpos = 1
+	for i = 1,#broken do
+		if broken:sub(i,i) == "\n" then
+			new = new .. "\n"
+		elseif broken:sub(i,i) == line:sub(bpos,bpos) then
+			new = new .. broken:sub(i,i)
+			bpos=bpos+1
+		else
+			while broken:sub(i,i) ~= line:sub(bpos,bpos) do
+				new = new .. line:sub(bpos,bpos)
+				bpos=bpos+1
+			end
+			bpos=bpos+1
+			new = new .. broken:sub(i,i)
+		end
+	end
+	return new:gmatch("(.-)\n")
+end
+
 local function drawWindow(x,width,height,irctext)
 	setBackground(theme.window.color)
 	gpu.fill(x,2,width,height," ")
@@ -252,9 +311,13 @@ local function drawWindow(x,width,height,irctext)
 	local buffer = {}
 	for i = 1,#irctext do
 		local first = true
-		for part in text.wrappedLines(irctext[i][2],textwidth,textwidth) do
+		local line = irctext[i][2]:gsub("[\2\29\31]",""):gsub("\15+","\15")
+		if not config.wocchat.showcolors or gpu.maxDepth() < 8 then
+			line = table.concat(colorChunker(line,true),"")
+		end
+		for part in basicWrap(line,textwidth) do
 			if first then
-				buffer[#buffer+1] = {irctext[i][1],part,irctext[i][3]}
+				buffer[#buffer+1] = {irctext[i][1],part,irctext[i][3],true}
 				first = false
 			else
 				buffer[#buffer+1] = {"",part,irctext[i][3]}
@@ -284,8 +347,37 @@ local function drawWindow(x,width,height,irctext)
 			end
 			gpu.set(x+nickwidth-unicode.wlen(buffer[i][1]),i+1,buffer[i][1])
 		end
-		setForeground(buffer[i][3] or theme.window.text.color)
-		gpu.set(x+nickwidth+1,i+1,buffer[i][2])
+		if config.wocchat.showcolors and gpu.maxDepth() >= 8 then
+			local chunk = colorChunker(buffer[i][2])
+			local xpos = x+nickwidth+1
+			if buffer[i][4] then
+				setForeground(buffer[i][3] or theme.window.text.color)
+				setBackground(theme.window.color)
+			end
+			for j = 1,#chunk do
+				if chunk[j]:sub(1,1) == "\3" then
+					local fg,bg
+					if chunk[j]:find(",",nil,true) then
+						fg,bg = chunk[j]:match("\3(.-),(.*)")
+						fg,bg = tonumber(fg),tonumber(bg)
+					else
+						fg = tonumber(chunk[j]:sub(2))
+					end
+					if fg then setForeground(config.wocchat.mirc.colors[fg%16],true) end
+					if bg then setBackground(config.wocchat.mirc.colors[bg%16],true) end
+				elseif chunk[j] == "\15" then
+					setForeground(buffer[i][3] or theme.window.text.color)
+					setBackground(theme.window.color)
+				else
+					gpu.set(xpos,i+1,chunk[j])
+					xpos = xpos + unicode.wlen(chunk[j])
+				end
+			end
+			setBackground(theme.window.color)
+		else
+			setForeground(buffer[i][3] or theme.window.text.color)
+			gpu.set(x+nickwidth+1,i+1,buffer[i][2])
+		end
 	end
 end
 
@@ -661,11 +753,12 @@ local function handleCommand(block, prefix, command, args, message)
 			end
 		end
 	elseif command == "QUIT" then
+		local name = name(prefix)
 		for i = 1,#block.children do
 			local cblock = block.children[i]
 			for i = 1,#cblock.names do
 				if cblock.names[i]:gsub("^[" .. nprefix .. "]+","") == name then
-					helper.addTextToBlock(cblock,"*",name(prefix) .. " quit (" .. (message or "Quit") .. ").")
+					helper.addTextToBlock(cblock,"*", name .. " quit (" .. (message or "Quit") .. ").",theme.actions.part.color)
 					table.remove(cblock.names,i)
 					break
 				end
@@ -691,22 +784,26 @@ local function handleCommand(block, prefix, command, args, message)
 		local cblock = helper.findChannel(block,args[1])
 		local name = name(prefix)
 		if name == nick then
-			if blocks[blocks.active] == cblock then
-				blocks.active = blocks.active - 1
-				helper.markDirty("blocks","window","nicks","title")
-			else
-				dirty.blocks = true
-			end
 			for i = 1,#block.children do
 				if block.children[i] == cblock then
 					table.remove(block.children,i)
 					break
 				end
 			end
+			local decrement = true
 			for i = 1,#blocks do
 				if blocks[i] == cblock then
 					table.remove(blocks,i)
+					break
+				elseif blocks[i] == blocks[blocks.active] then
+					decrement = false
 				end
+			end
+			if decrement then
+				blocks.active = blocks.active - 1
+				helper.markDirty("blocks","window","nicks","title")
+			else
+				dirty.blocks = true
 			end
 		else
 			helper.addTextToBlock(cblock,"*",name .. " has left the room (quit: " .. (message or "Quit") .. ").",theme.actions.part.color)
