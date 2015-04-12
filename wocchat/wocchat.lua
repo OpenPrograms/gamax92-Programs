@@ -167,6 +167,10 @@ local dirty = {
 	title = true,
 }
 
+local default_support = {
+	PREFIX="(ov)@+",
+}
+
 function drawTree(width)
 	setBackground(theme.tree.color)
 	gpu.fill(1,1,width,screen.height," ")
@@ -182,7 +186,7 @@ function drawTree(width)
 			gpu.set(2,y,"WocChat")
 		elseif block.type == "server" then
 			setForeground(theme.tree.group.color)
-			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.name)
+			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.support.NETWORK or block.name)
 			setForeground(theme.tree.group.prefix.color)
 			gpu.set(1,y,theme.tree.group.prefix.str)
 		elseif block.type == "channel" then
@@ -213,8 +217,10 @@ function drawList(width,names)
 	local x = screen.width-width+1
 	gpu.fill(x,1,width-1,screen.height," ")
 	setForeground(theme.tree.group.color)
+	local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
+	prefix = prefix:match("%)(.*)")
 	for y = 1,#names do
-		if names[y]:find("^[^%w]") then
+		if names[y]:find("^[" .. prefix .. "]") then
 			gpu.set(x,y,names[y])
 		else
 			gpu.set(x+1,y,names[y])
@@ -275,7 +281,7 @@ function drawTextbar(x,y,width,text)
 	gpu.fill(x,y,width,1," ")
 	if text ~= "" then
 		setForeground(theme.textbar.text.color)
-		gpu.set(x,y,text)
+		gpu.set(x,y,unicode.sub(text,1,width))
 	end
 end
 
@@ -305,7 +311,7 @@ function redraw(first)
 			for i = 1,#blocks do
 				local block = blocks[i]
 				if block.type == "server" then
-					treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. block.name))
+					treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. (block.support.NETWORK or block.name)))
 				elseif block.type == "channel" then
 					treewidth=math.max(treewidth,unicode.len(theme.tree.entry.prefix.str .. block.name))
 				end
@@ -328,8 +334,10 @@ function redraw(first)
 			listwidth = -1
 			if blocks[blocks.active].names ~= nil then
 				local names = blocks[blocks.active].names
+				local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
+				prefix = prefix:match("%)(.*)")
 				for i = 1,#names do
-					listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[^%w]") and 0 or 1))
+					listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[" .. prefix .. "]") and 0 or 1))
 				end
 				listwidth=listwidth+1
 				drawList(listwidth,names)
@@ -348,7 +356,14 @@ function redraw(first)
 		end
 		if dirty.title then
 			local block = blocks[blocks.active]
-			local title = block.names ~= nil and block.title or block.name .. " Main Window"
+			local title
+			if block.title ~= nil then
+				title = block.title
+			elseif block.support and block.support.NETWORK then
+				title = block.support.NETWORK .. " Main Window"
+			else
+				title = block.name .. " Main Window"
+			end
 			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,title)
 			dirty.title = false
 		end
@@ -397,9 +412,9 @@ function helper.getSocket()
 	end
 end
 function helper.joinServer(server)
-	local server = config.server[server]
+	local server,id = config.server[server],server
 	local nick = config.wocchat.default_nick
-	block = {type="server",name=server.name,text={},nick=nick,children={}}
+	block = {type="server",name=server.name,id=id,text={},nick=nick,children={},support={}}
 	block.sock = internet.open(server.server)
 	block.sock:setTimeout(0.05)
 	block.sock:write(string.format("NICK %s\r\n", nick))
@@ -423,6 +438,28 @@ function helper.findChannel(block,channel)
 			return children[i]
 		end
 	end
+end
+function helper.sortList(block)
+	local list = block.names
+	local prefix = block.parent.support.PREFIX or default_support.PREFIX
+	prefix = prefix:match("%)(.*)")
+	table.sort(list,function(a,b)
+		local as = prefix:find(a:sub(1,1),nil,true)
+		local bs = prefix:find(b:sub(1,1),nil,true)
+		if as and bs then
+			if as == bs then
+				return a:lower() < b:lower()
+			else
+				return as < bs
+			end
+		elseif as then
+			return true
+		elseif bs then
+			return false
+		else
+			return a:lower() < b:lower()
+		end
+	end)
 end
 
 -- utility method for reply tracking tables.
@@ -452,7 +489,7 @@ local replies = {
 	RPL_YOURHOST = "002",
 	RPL_CREATED = "003",
 	RPL_MYINFO = "004",
-	RPL_BOUNCE = "005",
+	RPL_ISUPPORT = "005",
 	RPL_LUSERCLIENT = "251",
 	RPL_LUSEROP = "252",
 	RPL_LUSERUNKNOWN = "253",
@@ -503,6 +540,8 @@ local replies = {
 }
 
 local function handleCommand(block, prefix, command, args, message)
+	local nprefix = block.support.PREFIX or default_support.PREFIX
+	nprefix = nprefix:match("%)(.*)")
 	local sock = block.sock
 	local nick = block.nick
 	if command == "PING" then
@@ -515,10 +554,10 @@ local function handleCommand(block, prefix, command, args, message)
 		for i = 1,#block.children do
 			local cblock = block.children[i]
 			for i = 1,#cblock.names do
-				if cblock.names[i]:gsub("^[^%w]+","") == oldNick then
+				if cblock.names[i]:gsub("^[" .. nprefix .. "]+","") == oldNick then
 					helper.addTextToBlock(cblock,"*",oldNick .. " is now known as " .. newNick .. ".")
 					cblock.names[i] = newNick
-					table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+					helper.sortList(cblock)
 					break
 				end
 			end
@@ -575,7 +614,7 @@ local function handleCommand(block, prefix, command, args, message)
 		for i = 1,#block.children do
 			local cblock = block.children[i]
 			for i = 1,#cblock.names do
-				if cblock.names[i]:gsub("^[^%w]+","") == name then
+				if cblock.names[i]:gsub("^[" .. nprefix .. "]+","") == name then
 					helper.addTextToBlock(cblock,"*",name(prefix) .. " quit (" .. (message or "Quit") .. ").")
 					table.remove(cblock.names,i)
 					break
@@ -593,7 +632,7 @@ local function handleCommand(block, prefix, command, args, message)
 			local cblock = helper.findChannel(block,args[1])
 			helper.addTextToBlock(cblock,"*",name .. " entered the room.",theme.actions.join.color)
 			table.insert(cblock.names,name)
-			table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+			helper.sortList(cblock)
 			if cblock == blocks[blocks.active] then
 				dirty.nicks = true
 			end
@@ -622,7 +661,7 @@ local function handleCommand(block, prefix, command, args, message)
 		else
 			helper.addTextToBlock(cblock,"*",name .. " has left the room (quit: " .. (message or "Quit") .. ").",theme.actions.part.color)
 			for i = 1,#cblock.names do
-				if cblock.names[i]:gsub("^[^%w]+","") == name then
+				if cblock.names[i]:gsub("^[" .. nprefix .. "]+","") == name then
 					table.remove(cblock.names,i)
 					break
 				end
@@ -638,7 +677,7 @@ local function handleCommand(block, prefix, command, args, message)
 		local cblock = helper.findChannel(block,args[1])
 		helper.addTextToBlock(cblock,"*",name(prefix) .. " kicked " .. args[2],theme.actions.part.color)
 		for i = 1,#cblock.names do
-			if cblock.names[i]:gsub("^[^%w]+","") == args[2] then
+			if cblock.names[i]:gsub("^[" .. nprefix .. "]+","") == args[2] then
 				table.remove(cblock.names,i)
 				break
 			end
@@ -678,10 +717,34 @@ local function handleCommand(block, prefix, command, args, message)
 	elseif tonumber(command) and ignore[tonumber(command)] then
 	elseif command == replies.RPL_WELCOME then
 		helper.addTextToBlock(block,"*",message)
+		if config.server[block.id].channels ~= nil then
+			for channel in (config.server[block.id].channels .. ","):gmatch("(.-),") do
+				sock:write(string.format("JOIN %s\r\n", channel))
+			end
+			sock:flush()
+		end
 	elseif command == replies.RPL_YOURHOST then
+		helper.addTextToBlock(block,"*",message)
 	elseif command == replies.RPL_CREATED then
+		helper.addTextToBlock(block,"*",message)
 	elseif command == replies.RPL_MYINFO then
-	elseif command == replies.RPL_BOUNCE then
+	elseif command == replies.RPL_ISUPPORT then
+		for i = 2,#args do
+			if args[i]:sub(1,1) == "-" then
+				block.support[args[i]:sub(2)] = nil
+			elseif args[i]:find("=",nil,true) then
+				local parameter,value = args[i]:match("(.-)=(.+)")
+				if value == "" then
+					value = true
+				end
+				block.support[parameter] = value
+			else
+				block.support[args[i]] = true
+			end
+			if args[i] == "NETWORK" or args[i] == "-NETWORK" or args[i]:sub(1,8) == "NETWORK=" then
+				helper.markDirty("blocks","title")
+			end
+		end
 	elseif command == replies.RPL_LUSERCLIENT then
 		helper.addTextToBlock(block,"*",message)
 	elseif command == replies.RPL_LUSEROP then
@@ -754,17 +817,17 @@ local function handleCommand(block, prefix, command, args, message)
 		local channel = args[2]
 		local cblock = helper.findChannel(block,channel)
 		cblock.names = names[channel]
-		table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+		helper.sortList(cblock)
 		if blocks[blocks.active] == cblock then
 			dirty.names = true
 		end
 		names[channel] = nil
 	elseif command == replies.RPL_MOTDSTART then
-		if options.motd then
+		if config.wocchat.showmotd then
 			helper.addTextToBlock(block,"*",message .. args[1])
 		end
 	elseif command == replies.RPL_MOTD then
-		if options.motd then
+		if config.wocchat.showmotd then
 			helper.addTextToBlock(block,"*",message)
 		end
 	elseif command == replies.RPL_ENDOFMOTD then
@@ -949,6 +1012,11 @@ function main()
 		end
 	end, math.huge)
 	redraw(true)
+	for k,v in pairs(config.server) do
+		if v.autojoin then
+			helper.joinServer(k)
+		end
+	end
 	local history = {}
 	while true do
 		setBackground(theme.textbar.color)
