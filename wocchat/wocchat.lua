@@ -65,7 +65,12 @@ function saveScreen()
 end
 
 function restoreScreen()
+	gpu.setForeground(0xFFFFFF)
+	gpu.setBackground(0)
+	gpu.fill(1,1,screen.width,screen.height," ")
+	gpu.set(screen.width/2-17,screen.height/2,"Restoring screen, please wait ...")
 	for i = 0,15 do
+		gpu.fill(screen.width/2-16,screen.height/2+1,i*2+2,1,"█")
 		gpu.setPaletteColor(i,screen.palette[i])
 	end
 	for bgs in pairs(screen.cbg) do
@@ -202,12 +207,18 @@ function drawTabs()
 end
 
 function drawList(width,names)
+	setBackground(theme.window.color)
+	gpu.fill(screen.width,1,1,screen.height," ")
 	setBackground(theme.tree.color)
 	local x = screen.width-width+1
-	gpu.fill(x,1,width,screen.height," ")
+	gpu.fill(x,1,width-1,screen.height," ")
 	setForeground(theme.tree.group.color)
 	for y = 1,#names do
-		gpu.set(x,y,names[y])
+		if names[y]:find("^[^%w]") then
+			gpu.set(x,y,names[y])
+		else
+			gpu.set(x+1,y,names[y])
+		end
 	end
 end
 
@@ -318,8 +329,9 @@ function redraw(first)
 			if blocks[blocks.active].names ~= nil then
 				local names = blocks[blocks.active].names
 				for i = 1,#names do
-					listwidth=math.max(listwidth,unicode.len(names[i]))
+					listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[^%w]") and 0 or 1))
 				end
+				listwidth=listwidth+1
 				drawList(listwidth,names)
 			end
 			dirty.nicks = false
@@ -360,6 +372,10 @@ function redraw(first)
 end
 
 local helper = {}
+function helper.write(sock,msg)
+	sock:write(msg .. "\r\n")
+	sock:flush()
+end
 function helper.addTextToBlock(block,user,msg,color)
 	block.text[#block.text+1] = {user,msg,color}
 	if block == blocks[blocks.active] then
@@ -380,10 +396,24 @@ function helper.getSocket()
 		return block.parent.sock
 	end
 end
+function helper.joinServer(server)
+	local server = config.server[server]
+	local nick = config.wocchat.default_nick
+	block = {type="server",name=server.name,text={},nick=nick,children={}}
+	block.sock = internet.open(server.server)
+	block.sock:setTimeout(0.05)
+	block.sock:write(string.format("NICK %s\r\n", nick))
+	block.sock:write(string.format("USER %s 0 * :%s [OpenComputers]\r\n", nick:lower(), nick))
+	block.sock:flush()
+	blocks[#blocks + 1] = block
+	blocks.active = #blocks
+	helper.markDirty("blocks","window","nicks","title")
+end
 function helper.joinChannel(block,channel)
 	local cblock = {type="channel",name=channel,text={},title="",names={},parent=block}
 	block.children[#block.children+1] = cblock
 	blocks[#blocks + 1] = cblock
+	blocks.active = #blocks
 	helper.markDirty("blocks","window","nicks","title")
 end
 function helper.findChannel(block,channel)
@@ -440,6 +470,7 @@ local replies = {
 	RPL_CHANNELMODEIS = "324",
 	RPL_NOTOPIC = "331",
 	RPL_TOPIC = "332",
+	RPL_TOPICWHOTIME = "333",
 	RPL_NAMREPLY = "353",
 	RPL_ENDOFNAMES = "366",
 	RPL_MOTDSTART = "375",
@@ -475,14 +506,26 @@ local function handleCommand(block, prefix, command, args, message)
 	local sock = block.sock
 	local nick = block.nick
 	if command == "PING" then
-		sock:write(string.format("PONG :%s\r\n", message))
-		sock:flush()
+		helper.write(sock, string.format("PONG :%s", message))
 	elseif command == "NICK" then
 		local oldNick, newNick = name(prefix), tostring(args[1] or message)
 		if oldNick == nick then
 			block.nick = newNick
 		end
-		helper.addTextToBlock(block,"*",oldNick .. " is now known as " .. newNick .. ".")
+		for i = 1,#block.children do
+			local cblock = block.children[i]
+			for i = 1,#cblock.names do
+				if cblock.names[i]:gsub("^[^%w]+","") == oldNick then
+					helper.addTextToBlock(cblock,"*",oldNick .. " is now known as " .. newNick .. ".")
+					cblock.names[i] = newNick
+					table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+					break
+				end
+			end
+			if cblock == blocks[blocks.active] then
+				dirty.nicks = true
+			end
+		end
 	elseif command == "MODE" then
 		if #args == 2 then
 			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
@@ -529,19 +572,80 @@ local function handleCommand(block, prefix, command, args, message)
 			end
 		end
 	elseif command == "QUIT" then
-		helper.addTextToBlock(block,"*",name(prefix) .. " quit (" .. (message or "Quit") .. ").")
+		for i = 1,#block.children do
+			local cblock = block.children[i]
+			for i = 1,#cblock.names do
+				if cblock.names[i]:gsub("^[^%w]+","") == name then
+					helper.addTextToBlock(cblock,"*",name(prefix) .. " quit (" .. (message or "Quit") .. ").")
+					table.remove(cblock.names,i)
+					break
+				end
+			end
+			if cblock == blocks[blocks.active] then
+				dirty.nicks = true
+			end
+		end
 	elseif command == "JOIN" then
-		if name(prefix) == nick then
+		local name = name(prefix)
+		if name == nick then
 			helper.joinChannel(block,args[1])
 		else
-			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " entered the room.")
+			local cblock = helper.findChannel(block,args[1])
+			helper.addTextToBlock(cblock,"*",name .. " entered the room.",theme.actions.join.color)
+			table.insert(cblock.names,name)
+			table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+			if cblock == blocks[blocks.active] then
+				dirty.nicks = true
+			end
 		end
 	elseif command == "PART" then
-		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " has left the room (quit: " .. (message or "Quit") .. ").")
+		local cblock = helper.findChannel(block,args[1])
+		local name = name(prefix)
+		if name == nick then
+			if blocks[blocks.active] == cblock then
+				blocks.active = blocks.active - 1
+				helper.markDirty("blocks","window","nicks","title")
+			else
+				dirty.blocks = true
+			end
+			for i = 1,#block.children do
+				if block.children[i] == cblock then
+					table.remove(block.children,i)
+					break
+				end
+			end
+			for i = 1,#blocks do
+				if blocks[i] == cblock then
+					table.remove(blocks,i)
+				end
+			end
+		else
+			helper.addTextToBlock(cblock,"*",name .. " has left the room (quit: " .. (message or "Quit") .. ").",theme.actions.part.color)
+			for i = 1,#cblock.names do
+				if cblock.names[i]:gsub("^[^%w]+","") == name then
+					table.remove(cblock.names,i)
+					break
+				end
+			end
+			if cblock == blocks[blocks.active] then
+				dirty.nicks = true
+			end
+		end
 	elseif command == "TOPIC" then
-		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " has changed the topic to: " .. message)
+		local cblock = helper.findChannel(block,args[1])
+		helper.addTextToBlock(cblock,"*",name(prefix) .. " has changed the topic to: " .. message)
 	elseif command == "KICK" then
-		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " kicked " .. args[2])
+		local cblock = helper.findChannel(block,args[1])
+		helper.addTextToBlock(cblock,"*",name(prefix) .. " kicked " .. args[2],theme.actions.part.color)
+		for i = 1,#cblock.names do
+			if cblock.names[i]:gsub("^[^%w]+","") == args[2] then
+				table.remove(cblock.names,i)
+				break
+			end
+		end
+		if cblock == blocks[blocks.active] then
+			dirty.nicks = true
+		end
 	elseif command == "PRIVMSG" then
 		local ctcp = message:match("^\1(.-)\1$")
 		if ctcp then
@@ -554,14 +658,11 @@ local function handleCommand(block, prefix, command, args, message)
 				local cblock = helper.findChannel(block,args[1])
 				helper.addTextToBlock(cblock,"*", name(prefix) .. " " .. param)
 			elseif ctcp == "TIME" then
-				sock:write("NOTICE " .. name(prefix) .. " :\001TIME " .. os.date() .. "\001\r\n")
-				sock:flush()
+				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001TIME " .. os.date() .. "\001")
 			elseif ctcp == "VERSION" then
-				sock:write("NOTICE " .. name(prefix) .. " :\001VERSION WocChat " .. version .. " [OpenComputers]\001\r\n")
-				sock:flush()
+				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001VERSION WocChat " .. version .. " [OpenComputers]\001")
 			elseif ctcp == "PING" then
-				sock:write("NOTICE " .. name(prefix) .. " :\001PING " .. param .. "\001\r\n")
-				sock:flush()
+				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001PING " .. param .. "\001")
 			end
 		else
 			if string.find(message, nick) then
@@ -629,10 +730,18 @@ local function handleCommand(block, prefix, command, args, message)
 	elseif command == replies.RPL_CHANNELMODEIS then
 		helper.addTextToBlock(block,"*","Channel mode for " .. args[1] .. ": " .. args[2] .. " (" .. args[3] .. ")")
 	elseif command == replies.RPL_NOTOPIC then
-		helper.addTextToBlock(block,"*","No topic is set for " .. args[1] .. ".")
+		local cblock = helper.findChannel(block,args[2])
+		helper.addTextToBlock(cblock,"*","No topic is set for " .. args[2] .. ".",theme.actions.title.color)
 	elseif command == replies.RPL_TOPIC then
 		local cblock = helper.findChannel(block,args[2])
 		cblock.title = message
+		helper.addTextToBlock(cblock,"*","Topic for " .. args[1] .. ": " .. message,theme.actions.title.color)
+		if blocks[blocks.active] == cblock then
+			dirty.title = true
+		end
+	elseif command == replies.RPL_TOPICWHOTIME then
+		local cblock = helper.findChannel(block,args[2])
+		helper.addTextToBlock(cblock,"*","Topic set by " .. args[3] .. " at " .. os.date("%a %b %d %H:%M:%S %Y",tonumber(args[4])),theme.actions.title.color)
 		if blocks[blocks.active] == cblock then
 			dirty.title = true
 		end
@@ -680,11 +789,11 @@ local function handleCommand(block, prefix, command, args, message)
 	command == replies.ERR_MODELOCK then
 		helper.addTextToBlock(block,"*","[ERROR]: " .. message)
 	elseif tonumber(command) and (tonumber(command) >= 200 and tonumber(command) < 400) then
-		helper.addTextToBlock(block,"*","[Response " .. command .. "] " .. table.concat(args, ", ") .. ": " .. message or "")
+		helper.addTextToBlock(block,"*","[Response " .. command .. "] " .. table.concat(args, ", ") .. ": " .. (message or ""))
 	elseif tonumber(command) and (tonumber(command) >= 400 and tonumber(command) < 600) then
-		helper.addTextToBlock(block,"*","[Error] " .. table.concat(args, ", ") .. ": " .. message or "")
+		helper.addTextToBlock(block,"*","[Error] " .. table.concat(args, ", ") .. ": " .. (message or ""))
 	else
-		helper.addTextToBlock(block,"*","Unhandled command: " .. command .. ": " .. message or "")
+		helper.addTextToBlock(block,"*","Unhandled command: " .. command .. ": " .. (message or ""))
 	end
 end
 
@@ -700,17 +809,14 @@ end
 function commands.server(args,opts)
 end
 function commands.connect(args,opts)
-	local nick = config.wocchat.default_nick
-	block = {type="server",name=config.server.EsperNet.name,text={},nick=nick,children={}}
-	block.sock = internet.open(config.server.EsperNet.server)
-	block.sock:setTimeout(0.05)
-	block.sock:write(string.format("NICK %s\r\n", nick))
-	block.sock:write(string.format("USER %s 0 * :%s [OpenComputers]\r\n", nick:lower(), nick))
-	block.sock:flush()
-	blocks[#blocks+1] = block
-	blocks.active = #blocks
-	helper.markDirty("blocks","window","nicks","title")
-	redraw()
+	if #args == 0 then
+		helper.addText("","Usage: /connect serverid")
+	elseif config.server[args[1]] == nil then
+		helper.addText("","No server named '" .. args[1] .. "'",theme.actions.error.color)
+	else
+		helper.joinServer(args[1])
+		redraw()
+	end
 end
 function commands.join(args,opts)
 	if #args == 0 then
@@ -718,11 +824,31 @@ function commands.join(args,opts)
 	else
 		local sock = helper.getSocket()
 		if sock == nil then
-			helper.addText("","Join cannot be performed on this block",theme.actions.error.color)
+			helper.addText("","/join cannot be performed on this block",theme.actions.error.color)
 		else
 			for i = 1,#args do
 				sock:write(string.format("JOIN %s\r\n", args[i]))
 			end
+			sock:flush()
+		end
+	end
+end
+function commands.part(args,opts)
+	local sock = helper.getSocket()
+	if sock == nil then
+		helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
+	else
+		if #args == 0 then
+			if blocks[blocks.active].type ~= "channel" then
+				helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
+			else
+				helper.write(sock, string.format("PART %s", blocks[blocks.active].name))
+			end
+		else
+			for i = 1,#args do
+				sock:write(string.format("PART %s\r\n", args[i]))
+			end
+			sock:flush()
 		end
 	end
 end
@@ -730,19 +856,20 @@ function commands.raw(args,opts)
 	if #args ~= 0 then
 		local sock = helper.getSocket()
 		if sock == nil then
-			helper.addText("","RAW cannot be performed on this block",theme.actions.error.color)
+			helper.addText("","/raw cannot be performed on this block",theme.actions.error.color)
 		else
-			sock:write(string.format("%s\r\n", table.concat(args," ")))
+			helper.write(sock, string.format("%s", table.concat(args," ")))
 		end
 	end
 end
 function commands.me(args,opts)
 	if #args ~= 0 then
 		local sock = helper.getSocket()
-		if blocks[blocks.active] ~= "channel" or sock == nil then
+		if blocks[blocks.active].type ~= "channel" or sock == nil then
 			helper.addText("","/me cannot be performed on this block",theme.actions.error.color)
 		else
-			sock:write(string.format("PRIVMSG %s :\1ACTION %s\1\r\n", table.concat(args," ")))
+			helper.write(sock, string.format("PRIVMSG %s :\1ACTION %s\1", blocks[blocks.active].name, table.concat(args," ")))
+			helper.addText("*",blocks[blocks.active].parent.nick .. " " .. table.concat(args," "))
 		end
 	end
 end
@@ -764,6 +891,7 @@ function main()
 	local i=0
 	while theme[i] ~= nil do
 		gpu.setPaletteColor(i,theme[i])
+		gpu.fill(screen.width/2-16,screen.height/2+1,i*2+2,1,"█")
 		i=i+1
 	end
 	term.setCursor(1,1)
@@ -839,7 +967,7 @@ function main()
 				helper.addText("","No such command: " .. parse[1])
 			end
 		elseif blocks[blocks.active].type == "channel" then
-			blocks[blocks.active].parent.sock:write(string.format("PRIVMSG %s :%s\r\n",blocks[blocks.active].name,line))
+			helper.write(blocks[blocks.active].parent.sock, string.format("PRIVMSG %s :%s",blocks[blocks.active].name,line))
 			helper.addText(blocks[blocks.active].parent.nick,line)
 		end
 	end
@@ -870,10 +998,6 @@ if persist.timer then
 	event.cancel(persist.timer)
 end
 if screen then
-	gpu.setForeground(0xFFFFFF)
-	gpu.setBackground(0)
-	gpu.fill(1,1,screen.width,screen.height," ")
-	gpu.set(screen.width/2-17,screen.height/2,"Restoring screen, please wait ...")
 	restoreScreen()
 end
 if not stat then
