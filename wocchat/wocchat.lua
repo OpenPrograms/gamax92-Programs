@@ -15,6 +15,8 @@ elseif not component.isAvailable("internet") then
 	return
 end
 
+local version = "v0.0.1"
+
 local computer = require("computer")
 local event = require("event")
 local internet = require("internet")
@@ -153,12 +155,23 @@ function simpleHash(str)
 	return v
 end
 
+local dirty = {
+	blocks = true,
+	window = true,
+	nicks = true,
+	title = true,
+}
+
 function drawTree(width)
 	setBackground(theme.tree.color)
 	gpu.fill(1,1,width,screen.height," ")
 	local y = 1
 	for i = 1,#blocks do
 		local block = blocks[i]
+		if blocks.active == i then
+			setBackground(theme.tree.active.color)
+			gpu.fill(1,i,width,1," ")
+		end
 		if block.type == "main" then
 			setForeground(theme.tree.group.color)
 			gpu.set(2,y,"WocChat")
@@ -171,12 +184,15 @@ function drawTree(width)
 			setForeground(theme.tree.entry.color)
 			gpu.set(unicode.wlen(theme.tree.entry.prefix.str)+1,y,block.name)
 			setForeground(theme.tree.entry.prefix.color)
-			local siblings = blocks[block.parent].children
-			if i == siblings[#siblings] then
+			local siblings = block.parent.children
+			if block == siblings[#siblings] then
 				gpu.set(1,y,theme.tree.entry.prefix.last)
 			else
 				gpu.set(1,y,theme.tree.entry.prefix.str)
 			end
+		end
+		if blocks.active == i then
+			setBackground(theme.tree.color)
 		end
 		y=y+1
 	end
@@ -270,54 +286,475 @@ local customGPU = {
 	end
 }
 
-function redraw()
+function redraw(first)
 	if config.wocchat.usetree then
-		local treewidth = 8
-		for i = 1,#blocks do
-			local block = blocks[i]
-			if block.type == "server" then
-				treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. block.name))
-			elseif block.type == "channel" then
-				treewidth=math.max(treewidth,unicode.len(theme.tree.entry.prefix.str .. block.name))
+		local treewidth = persist.treewidth
+		if dirty.blocks then
+			treewidth = 8
+			for i = 1,#blocks do
+				local block = blocks[i]
+				if block.type == "server" then
+					treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. block.name))
+				elseif block.type == "channel" then
+					treewidth=math.max(treewidth,unicode.len(theme.tree.entry.prefix.str .. block.name))
+				end
 			end
+			drawTree(treewidth)
+			dirty.blocks = false
 		end
-		drawTree(treewidth)
-		setBackground(theme.window.color)
-		setForeground(theme.tree.color)
-		gpu.fill(treewidth+1,2,1,screen.height-2,"▌")
-		setBackground(theme.textbar.color)
-		gpu.set(treewidth+1,screen.height,"▌")
-		gpu.set(treewidth+1,1,"▌")
-		local listwidth = -1
-		if blocks[blocks.active].names ~= nil then
-			local names = blocks[blocks.active].names
-			for i = 1,#names do
-				listwidth=math.max(listwidth,unicode.len(names[i]))
+		if treewidth ~= persist.treewidth then
+			dirty.window = true
+			dirty.title = true
+			setBackground(theme.window.color)
+			setForeground(theme.tree.color)
+			gpu.fill(treewidth+1,2,1,screen.height-2,"▌")
+			setBackground(theme.textbar.color)
+			gpu.set(treewidth+1,screen.height,"▌")
+			gpu.set(treewidth+1,1,"▌")
+		end
+		local listwidth = persist.listwidth
+		if dirty.nicks then
+			listwidth = -1
+			if blocks[blocks.active].names ~= nil then
+				local names = blocks[blocks.active].names
+				for i = 1,#names do
+					listwidth=math.max(listwidth,unicode.len(names[i]))
+				end
+				drawList(listwidth,names)
 			end
-			drawList(listwidth,names)
+			dirty.nicks = false
+		end
+		if listwidth ~= persist.listwidth then
+			dirty.window = true
+			dirty.title = true
 			setBackground(theme.tree.color)
 			setForeground(theme.window.color)
 			gpu.fill(screen.width-listwidth,2,1,screen.height-2,"▌")
 			setForeground(theme.textbar.color)
 			gpu.set(screen.width-listwidth,screen.height,"▌")
 			gpu.set(screen.width-listwidth,1,"▌")
-			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].title)
-		else
-			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,blocks[blocks.active].name .. " Main Window")
 		end
-		drawWindow(treewidth+2,screen.width-treewidth-listwidth-2,screen.height-2,blocks[blocks.active].text)
-		drawTextbar(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,"")
+		if dirty.title then
+			local block = blocks[blocks.active]
+			local title = block.names ~= nil and block.title or block.name .. " Main Window"
+			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,title)
+			dirty.title = false
+		end
+		if dirty.window then
+			drawWindow(treewidth+2,screen.width-treewidth-listwidth-2,screen.height-2,blocks[blocks.active].text)
+			dirty.window = false
+		end
+		if first then
+			drawTextbar(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,"")
+		end
 		customGPU:gpuSetup(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,1)
 		persist.window_width = screen.width-treewidth-listwidth-2
 		persist.window_x = treewidth+2
+		persist.listwidth = listwidth
+		persist.treewidth = treewidth
 	else
 		
+	end
+	setBackground(theme.textbar.color)
+	setForeground(theme.textbar.text.color)
+end
+
+local helper = {}
+function helper.addTextToBlock(block,user,msg,color)
+	block.text[#block.text+1] = {user,msg,color}
+	if block == blocks[blocks.active] then
+		dirty.window = true
+	end
+end
+function helper.addText(user,msg,color)
+	return helper.addTextToBlock(blocks[blocks.active],user,msg,color)
+end
+function helper.markDirty(...)
+	for k, v in pairs({...}) do dirty[v] = true end
+end
+function helper.getSocket()
+	local block = blocks[blocks.active]
+	if block.sock then
+		return block.sock
+	elseif block.parent then
+		return block.parent.sock
+	end
+end
+function helper.joinChannel(block,channel)
+	local cblock = {type="channel",name=channel,text={},title="",names={},parent=block}
+	block.children[#block.children+1] = cblock
+	blocks[#blocks + 1] = cblock
+	helper.markDirty("blocks","window","nicks","title")
+end
+function helper.findChannel(block,channel)
+	local children = block.children
+	for i = 1,#children do
+		if children[i].name == channel then
+			return children[i]
+		end
+	end
+end
+
+-- utility method for reply tracking tables.
+function autocreate(table, key)
+  table[key] = {}
+  return table[key]
+end
+
+local function name(identity)
+	return identity and identity:match("^[^!]+") or identity or "Anonymous"
+end
+local whois = setmetatable({}, {__index=autocreate})
+local names = setmetatable({}, {__index=autocreate})
+
+local ignore = {
+	[213]=true, [214]=true, [215]=true, [216]=true, [217]=true,
+	[218]=true, [231]=true, [232]=true, [233]=true, [240]=true,
+	[241]=true, [244]=true, [244]=true, [246]=true, [247]=true,
+	[250]=true, [300]=true, [316]=true, [361]=true, [362]=true,
+	[363]=true, [373]=true, [384]=true, [492]=true,
+	-- custom ignored responses.
+	[265]=true, [266]=true, [330]=true
+}
+
+local replies = {
+	RPL_WELCOME = "001",
+	RPL_YOURHOST = "002",
+	RPL_CREATED = "003",
+	RPL_MYINFO = "004",
+	RPL_BOUNCE = "005",
+	RPL_LUSERCLIENT = "251",
+	RPL_LUSEROP = "252",
+	RPL_LUSERUNKNOWN = "253",
+	RPL_LUSERCHANNELS = "254",
+	RPL_LUSERME = "255",
+	RPL_AWAY = "301",
+	RPL_UNAWAY = "305",
+	RPL_NOWAWAY = "306",
+	RPL_WHOISUSER = "311",
+	RPL_WHOISSERVER = "312",
+	RPL_WHOISOPERATOR = "313",
+	RPL_WHOISIDLE = "317",
+	RPL_ENDOFWHOIS = "318",
+	RPL_WHOISCHANNELS = "319",
+	RPL_CHANNELMODEIS = "324",
+	RPL_NOTOPIC = "331",
+	RPL_TOPIC = "332",
+	RPL_NAMREPLY = "353",
+	RPL_ENDOFNAMES = "366",
+	RPL_MOTDSTART = "375",
+	RPL_MOTD = "372",
+	RPL_ENDOFMOTD = "376",
+	RPL_WHOISSECURE = "671",
+	RPL_HELPSTART = "704",
+	RPL_HELPTXT = "705",
+	RPL_ENDOFHELP = "706",
+	RPL_UMODEGMSG = "718",
+
+	ERR_BANLISTFULL = "478",
+	ERR_CHANNELISFULL = "471",
+	ERR_UNKNOWNMODE = "472",
+	ERR_INVITEONLYCHAN = "473",
+	ERR_BANNEDFROMCHAN = "474",
+	ERR_CHANOPRIVSNEEDED = "482",
+	ERR_UNIQOPRIVSNEEDED = "485",
+	ERR_USERNOTINCHANNEL = "441",
+	ERR_NOTONCHANNEL = "442",
+	ERR_NICKCOLLISION = "436",
+	ERR_NICKNAMEINUSE = "433",
+	ERR_ERRONEUSNICKNAME = "432",
+	ERR_WASNOSUCHNICK = "406",
+	ERR_TOOMANYCHANNELS = "405",
+	ERR_CANNOTSENDTOCHAN = "404",
+	ERR_NOSUCHCHANNEL = "403",
+	ERR_NOSUCHNICK = "401",
+	ERR_MODELOCK = "742"
+}
+
+local function handleCommand(block, prefix, command, args, message)
+	local sock = block.sock
+	local nick = block.nick
+	if command == "PING" then
+		sock:write(string.format("PONG :%s\r\n", message))
+		sock:flush()
+	elseif command == "NICK" then
+		local oldNick, newNick = name(prefix), tostring(args[1] or message)
+		if oldNick == nick then
+			block.nick = newNick
+		end
+		helper.addTextToBlock(block,"*",oldNick .. " is now known as " .. newNick .. ".")
+	elseif command == "MODE" then
+		if #args == 2 then
+			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
+		else
+			local setmode = {}
+			local cumode = "+"
+			args[2]:gsub(".", function(char)
+				if char == "-" or char == "+" then
+					cumode = char
+				else
+					table.insert(setmode, {cumode, char})
+				end
+			end)
+			local d = {}
+			local users = {}
+			for i = 3, #args do
+				users[i-2] = args[i]
+			end
+			users[#users+1] = message
+			local last
+			local ctxt = ""
+			for c = 1, #users do
+				if not setmode[c] then
+					break
+				end
+				local mode = setmode[c][2]
+				local pfx = setmode[c][1]=="+"
+				local key = mode == "o" and (pfx and "opped" or "deoped") or
+					mode == "v" and (pfx and "voiced" or "devoiced") or
+					mode == "q" and (pfx and "quieted" or "unquieted") or
+					mode == "b" and (pfx and "banned" or "unbanned") or
+					"set " .. setmode[c][1] .. mode .. " on"
+				if last ~= key then
+					if last then
+						helper.addTextToBlock(block,"*",ctxt)
+					end
+					ctxt = "[" .. args[1] .. "] " .. name(prefix) .. " " .. key
+					last = key
+				end
+				ctxt = ctxt .. " " .. users[c]
+			end
+			if #ctxt > 0 then
+				helper.addTextToBlock(block,"*",ctxt)
+			end
+		end
+	elseif command == "QUIT" then
+		helper.addTextToBlock(block,"*",name(prefix) .. " quit (" .. (message or "Quit") .. ").")
+	elseif command == "JOIN" then
+		if name(prefix) == nick then
+			helper.joinChannel(block,args[1])
+		else
+			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " entered the room.")
+		end
+	elseif command == "PART" then
+		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " has left the room (quit: " .. (message or "Quit") .. ").")
+	elseif command == "TOPIC" then
+		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " has changed the topic to: " .. message)
+	elseif command == "KICK" then
+		helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " kicked " .. args[2])
+	elseif command == "PRIVMSG" then
+		local ctcp = message:match("^\1(.-)\1$")
+		if ctcp then
+			local ctcp, param = ctcp:match("^(%S+) ?(.-)$")
+			if ctcp ~= "ACTION" then
+				helper.addTextToBlock(block,"*","[" .. name(prefix) .. "] CTCP " .. ctcp .. " " .. param)
+			end
+			ctcp = ctcp:upper()
+			if ctcp == "ACTION" then
+				local cblock = helper.findChannel(block,args[1])
+				helper.addTextToBlock(cblock,"*", name(prefix) .. " " .. param)
+			elseif ctcp == "TIME" then
+				sock:write("NOTICE " .. name(prefix) .. " :\001TIME " .. os.date() .. "\001\r\n")
+				sock:flush()
+			elseif ctcp == "VERSION" then
+				sock:write("NOTICE " .. name(prefix) .. " :\001VERSION WocChat " .. version .. " [OpenComputers]\001\r\n")
+				sock:flush()
+			elseif ctcp == "PING" then
+				sock:write("NOTICE " .. name(prefix) .. " :\001PING " .. param .. "\001\r\n")
+				sock:flush()
+			end
+		else
+			if string.find(message, nick) then
+				computer.beep()
+			end
+			local cblock = helper.findChannel(block,args[1])
+			helper.addTextToBlock(cblock, name(prefix), message)
+		end
+	elseif command == "NOTICE" then
+		helper.addTextToBlock(block,"*","[NOTICE] " .. message)
+	elseif command == "ERROR" then
+		helper.addTextToBlock(block,"*","[ERROR] " .. message)
+	elseif tonumber(command) and ignore[tonumber(command)] then
+	elseif command == replies.RPL_WELCOME then
+		helper.addTextToBlock(block,"*",message)
+	elseif command == replies.RPL_YOURHOST then
+	elseif command == replies.RPL_CREATED then
+	elseif command == replies.RPL_MYINFO then
+	elseif command == replies.RPL_BOUNCE then
+	elseif command == replies.RPL_LUSERCLIENT then
+		helper.addTextToBlock(block,"*",message)
+	elseif command == replies.RPL_LUSEROP then
+	elseif command == replies.RPL_LUSERUNKNOWN then
+	elseif command == replies.RPL_LUSERCHANNELS then
+	elseif command == replies.RPL_LUSERME then
+		helper.addTextToBlock(block,"*",message)
+	elseif command == replies.RPL_AWAY then
+		helper.addTextToBlock(block,"*",string.format("%s is away: %s", name(args[1]), message))
+	elseif command == replies.RPL_UNAWAY or command == replies.RPL_NOWAWAY then
+		helper.addTextToBlock(block,"*",message)
+	elseif command == replies.RPL_WHOISUSER then
+		local nick = args[2]:lower()
+		whois[nick].nick = args[2]
+		whois[nick].user = args[3]
+		whois[nick].host = args[4]
+		whois[nick].realName = message
+	elseif command == replies.RPL_WHOISSERVER then
+		local nick = args[2]:lower()
+		whois[nick].server = args[3]
+		whois[nick].serverInfo = message
+	elseif command == replies.RPL_WHOISOPERATOR then
+		local nick = args[2]:lower()
+		whois[nick].isOperator = true
+	elseif command == replies.RPL_WHOISIDLE then
+		local nick = args[2]:lower()
+		whois[nick].idle = tonumber(args[3])
+	elseif command == replies.RPL_WHOISSECURE then
+		local nick = args[2]:lower()
+		whois[nick].secureconn = "Is using a secure connection"
+	elseif command == replies.RPL_ENDOFWHOIS then
+		local nick = args[2]:lower()
+		local info = whois[nick]
+		if info.nick then helper.addTextToBlock(block,"*","Nick: " .. info.nick) end
+		if info.user then helper.addTextToBlock(block,"*","User name: " .. info.user) end
+		if info.realName then helper.addTextToBlock(block,"*","Real name: " .. info.realName) end
+		if info.host then helper.addTextToBlock(block,"*","Host: " .. info.host) end
+		if info.server then helper.addTextToBlock(block,"*","Server: " .. info.server .. (info.serverInfo and (" (" .. info.serverInfo .. ")") or "")) end
+		if info.secureconn then helper.addTextToBlock(block,"*",info.secureconn) end
+		if info.channels then helper.addTextToBlock(block,"*","Channels: " .. info.channels) end
+		if info.idle then helper.addTextToBlock(block,"*","Idle for: " .. info.idle) end
+		whois[nick] = nil
+	elseif command == replies.RPL_WHOISCHANNELS then
+		local nick = args[2]:lower()
+		whois[nick].channels = message
+	elseif command == replies.RPL_CHANNELMODEIS then
+		helper.addTextToBlock(block,"*","Channel mode for " .. args[1] .. ": " .. args[2] .. " (" .. args[3] .. ")")
+	elseif command == replies.RPL_NOTOPIC then
+		helper.addTextToBlock(block,"*","No topic is set for " .. args[1] .. ".")
+	elseif command == replies.RPL_TOPIC then
+		local cblock = helper.findChannel(block,args[2])
+		cblock.title = message
+		if blocks[blocks.active] == cblock then
+			dirty.title = true
+		end
+	elseif command == replies.RPL_NAMREPLY then
+		local channel = args[3]
+		for name in (message .. " "):gmatch("(.-) ") do
+			table.insert(names[channel], name)
+		end
+	elseif command == replies.RPL_ENDOFNAMES then
+		local channel = args[2]
+		local cblock = helper.findChannel(block,channel)
+		cblock.names = names[channel]
+		table.sort(cblock.names,function(a,b) return a:lower() < b:lower() end)
+		if blocks[blocks.active] == cblock then
+			dirty.names = true
+		end
+		names[channel] = nil
+	elseif command == replies.RPL_MOTDSTART then
+		if options.motd then
+			helper.addTextToBlock(block,"*",message .. args[1])
+		end
+	elseif command == replies.RPL_MOTD then
+		if options.motd then
+			helper.addTextToBlock(block,"*",message)
+		end
+	elseif command == replies.RPL_ENDOFMOTD then
+	elseif command == replies.RPL_HELPSTART or 
+	command == replies.RPL_HELPTXT or 
+	command == replies.RPL_ENDOFHELP then
+		helper.addTextToBlock(block,"*",message)
+	elseif command == replies.ERR_BANLISTFULL or
+	command == replies.ERR_BANNEDFROMCHAN or
+	command == replies.ERR_CANNOTSENDTOCHAN or
+	command == replies.ERR_CHANNELISFULL or
+	command == replies.ERR_CHANOPRIVSNEEDED or
+	command == replies.ERR_ERRONEUSNICKNAME or
+	command == replies.ERR_INVITEONLYCHAN or
+	command == replies.ERR_NICKCOLLISION or
+	command == replies.ERR_NOSUCHNICK or
+	command == replies.ERR_NOTONCHANNEL or
+	command == replies.ERR_UNIQOPRIVSNEEDED or
+	command == replies.ERR_UNKNOWNMODE or
+	command == replies.ERR_USERNOTINCHANNEL or
+	command == replies.ERR_WASNOSUCHNICK or
+	command == replies.ERR_MODELOCK then
+		helper.addTextToBlock(block,"*","[ERROR]: " .. message)
+	elseif tonumber(command) and (tonumber(command) >= 200 and tonumber(command) < 400) then
+		helper.addTextToBlock(block,"*","[Response " .. command .. "] " .. table.concat(args, ", ") .. ": " .. message or "")
+	elseif tonumber(command) and (tonumber(command) >= 400 and tonumber(command) < 600) then
+		helper.addTextToBlock(block,"*","[Error] " .. table.concat(args, ", ") .. ": " .. message or "")
+	else
+		helper.addTextToBlock(block,"*","Unhandled command: " .. command .. ": " .. message or "")
+	end
+end
+
+local commands = {}
+function commands.help(...)
+	local names = {}
+	for k,v in pairs(commands) do
+		names[#names+1] = k
+	end
+	table.sort(names)
+	helper.addText("","Commands Available: " .. table.concat(names,", "))
+end
+function commands.server(args,opts)
+end
+function commands.connect(args,opts)
+	local nick = config.wocchat.default_nick
+	block = {type="server",name=config.server.EsperNet.name,text={},nick=nick,children={}}
+	block.sock = internet.open(config.server.EsperNet.server)
+	block.sock:setTimeout(0.05)
+	block.sock:write(string.format("NICK %s\r\n", nick))
+	block.sock:write(string.format("USER %s 0 * :%s [OpenComputers]\r\n", nick:lower(), nick))
+	block.sock:flush()
+	blocks[#blocks+1] = block
+	blocks.active = #blocks
+	helper.markDirty("blocks","window","nicks","title")
+	redraw()
+end
+function commands.join(args,opts)
+	if #args == 0 then
+		helper.addText("","Usage: /join channel1 channel2 channel3 ...")
+	else
+		local sock = helper.getSocket()
+		if sock == nil then
+			helper.addText("","Join cannot be performed on this block",theme.actions.error.color)
+		else
+			for i = 1,#args do
+				sock:write(string.format("JOIN %s\r\n", args[i]))
+			end
+		end
+	end
+end
+function commands.raw(args,opts)
+	if #args ~= 0 then
+		local sock = helper.getSocket()
+		if sock == nil then
+			helper.addText("","RAW cannot be performed on this block",theme.actions.error.color)
+		else
+			sock:write(string.format("%s\r\n", table.concat(args," ")))
+		end
+	end
+end
+function commands.me(args,opts)
+	if #args ~= 0 then
+		local sock = helper.getSocket()
+		if blocks[blocks.active] ~= "channel" or sock == nil then
+			helper.addText("","/me cannot be performed on this block",theme.actions.error.color)
+		else
+			sock:write(string.format("PRIVMSG %s :\1ACTION %s\1\r\n", table.concat(args," ")))
+		end
 	end
 end
 
 function main()
 	print("Loading config ...")
 	loadConfig()
+	if config.wocchat.default_nick == nil then
+		term.write("Enter your default nickname: ")
+		local nick = term.read()
+		config.wocchat.default_nick = text.trim(nick)
+	end
 	print("Saving screen ...")
 	saveScreen()
 	gpu.setForeground(0xFFFFFF)
@@ -330,33 +767,82 @@ function main()
 		i=i+1
 	end
 	term.setCursor(1,1)
-	blocks = {
-		{type="main",name="WocChat",text={}},
-		{type="server",name="EsperNet",text={},children={3,4}},
-		{type="channel",name="#oc",title="OpenComputers! Home of the garbage scala code",text={{"Temia","moo?"},{"gamax92","yay"},{"*","rashy waves at Temia"}},names={"Nobody","Important"},parent=2},
-		{type="channel",name="#oc_again",title="Extra Channel for testing",text={},names={"Useless","People"},parent=2},
-		active=3,
-	}
-	redraw()
+	function persist.mouse(event, addr, x, y, button)
+		if config.wocchat.usetree then
+			if y <= #blocks and x <= persist.window_x-2 and y ~= blocks.active then
+				blocks.active = y
+				helper.markDirty("blocks","window","nicks","title")
+				redraw()
+			end
+		else
+		end
+	end
+	event.listen("touch",persist.mouse)
+	persist.timer = event.timer(0.5, function()
+		for i = 1,#blocks do
+			local block = blocks[i]
+			if block.sock ~= nil then
+				local sock = block.sock
+				repeat
+					local ok, line = pcall(sock.read, sock)
+					if ok then
+						if not line then
+							helper.addTextToBlock(block,"*","Connection lost.")
+							pcall(sock.close, sock)
+							block.sock = nil
+							break
+						end
+						line = text.trim(line) -- get rid of trailing \r
+						local origline = line
+						local match, prefix = line:match("^(:(%S+) )")
+						if match then line = line:sub(#match + 1) end
+						local match, command = line:match("^(([^:]%S*))")
+						if match then line = line:sub(#match + 1) end
+						local args = {}
+						repeat
+							local match, arg = line:match("^( ([^:]%S*))")
+							if match then
+								line = line:sub(#match + 1)
+								table.insert(args, arg)
+							end
+						until not match
+						local message = line:match("^ :(.*)$")
+						local hco, hcerr = pcall(handleCommand, block, prefix, command, args, message)
+						if not hco then
+							helper.addTextToBlock(block,"LuaError",hcerr)
+						end
+						helper.addTextToBlock(blocks[1],"RAW",origline)
+					end
+				until not ok
+			end
+		end
+		if dirty.blocks or dirty.title or dirty.window or dirty.nicks then
+			redraw()
+		end
+	end, math.huge)
+	redraw(true)
 	local history = {}
 	while true do
 		setBackground(theme.textbar.color)
 		setForeground(theme.textbar.text.color)
 		local line = term.read(history)
 		if line ~= nil then line = text.trim(line) end
-		if line == "/quit" then break end
-		if line == "/redraw" then
-			loadConfig()
-			redraw()
-		end
-		local text = blocks[blocks.active].text
-		text[#text+1] = {"Guest" .. math.random(1000,99999),line}
-		if config.wocchat.usetree then
-			drawWindow(persist.window_x,persist.window_width,screen.height-2,text)
-		else
+		if line == "/exit" then break end
+		if line:sub(1,1) == "/" then
+			local parse = {}
+			for part in (line:sub(2) .. " "):gmatch("(.-) ") do
+				parse[#parse+1] = part
+			end
+			if commands[parse[1]] ~= nil then
+				commands[parse[1]](shell.parse(table.unpack(parse,2)))
+			else
+				helper.addText("","No such command: " .. parse[1])
+			end
+		elseif blocks[blocks.active].type == "channel" then
+			blocks[blocks.active].parent.sock:write(string.format("PRIVMSG %s :%s\r\n",blocks[blocks.active].name,line))
+			helper.addText(blocks[blocks.active].parent.nick,line)
 		end
 	end
-	--os.sleep(10)
 end
 
 -- Hijack needed for term.read
@@ -371,6 +857,18 @@ function component.getPrimary(componentType)
 end
 local stat, err = xpcall(main,debug.traceback)
 component.getPrimary = old_getPrimary
+for i = 1,#blocks do
+	if blocks[i].sock then
+		pcall(blocks[i].sock.write, blocks[i].sock, "QUIT\r\n")
+		pcall(blocks[i].sock.close, blocks[i].sock)
+	end
+end
+if persist.mouse then
+	event.ignore("touch",persist.mouse)
+end
+if persist.timer then
+	event.cancel(persist.timer)
+end
 if screen then
 	gpu.setForeground(0xFFFFFF)
 	gpu.setBackground(0)
