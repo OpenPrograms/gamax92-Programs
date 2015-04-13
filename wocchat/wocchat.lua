@@ -187,7 +187,7 @@ local function drawTree(width)
 		end
 		if block.type == "main" then
 			setForeground(theme.tree.group.color)
-			gpu.set(2,y,"WocChat")
+			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.name)
 		elseif block.type == "server" or block.type == "dead_server" then
 			setForeground(block.type == "server" and theme.tree.group.color or theme.tree.dead.color)
 			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.support.NETWORK or block.name)
@@ -212,37 +212,70 @@ local function drawTree(width)
 end
 
 local function drawTabs()
+	setBackground(theme.tree.color)
+	setForeground(theme.window.color)
+	gpu.fill(2,screen.height,screen.width-1,1," ")
+	gpu.set(1,screen.height,"┃")
+	local x = 1
+	for i = 1,#blocks do
+		local block = blocks[i]
+		local name = block.name
+		if block.type == "server" or block.type == "dead_server" then
+			name = block.support.NETWORK or block.name
+		end
+		x=x+unicode.wlen(name)+1
+		gpu.set(x,screen.height,"┃")
+	end
+	x = 2
+	for i = 1,#blocks do
+		local block = blocks[i]
+		local name = block.name
+		if block.type == "server" or block.type == "dead_server" then
+			name = block.support.NETWORK or block.name
+		end
+		if blocks.active == i then
+			setBackground(theme.tree.active.color)
+		end
+		setForeground(block.type:sub(1,5) == "dead_" and theme.tree.dead.color or theme.tree.group.color)
+		gpu.set(x,screen.height,name)
+		if blocks.active == i then
+			setBackground(theme.tree.color)
+		end
+		x=x+unicode.wlen(name)+1
+	end
 end
 
 local scroll_chars = {"█","▇","▆","▅","▄","▃","▂","▁"}
 
-local function drawList(width)
+local function drawList(width,height)
 	local block = blocks[blocks.active]
 	local names = block.names
 	setBackground(theme.window.color)
-	gpu.fill(screen.width,1,1,screen.height," ")
+	gpu.fill(screen.width,1,1,height," ")
 	setBackground(theme.tree.color)
 	local x = screen.width-width+1
-	gpu.fill(x,1,width-1,screen.height," ")
+	gpu.fill(x,1,width-1,height," ")
 	setForeground(theme.tree.group.color)
 	local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
 	prefix = prefix:match("%)(.*)")
-	block.scroll = math.max(math.min(block.scroll,#names-screen.height+1),1)
-	for y = block.scroll,#names do
+	block.scroll = math.max(math.min(block.scroll,#names-height+1),1)
+	for y = block.scroll,math.min(#names,height+block.scroll-1) do
 		if names[y]:find("^[" .. prefix .. "]") then
 			gpu.set(x,y-block.scroll+1,names[y])
 		else
 			gpu.set(x+1,y-block.scroll+1,names[y])
 		end
 	end
-	local pos = (block.scroll-1)/(#names-screen.height)*(screen.height-1)+1
+	local pos = (block.scroll-1)/(#names-height)*(height-1)+1
 	local ipos = math.floor((pos % 1)*8)+1
 	setForeground(theme.tree.active.color)
 	setBackground(theme.window.color)
 	gpu.set(screen.width,pos,scroll_chars[ipos])
-	setBackground(theme.tree.active.color)
-	setForeground(theme.window.color)
-	gpu.set(screen.width,pos+1,scroll_chars[ipos])
+	if pos+1 <= height then
+		setBackground(theme.tree.active.color)
+		setForeground(theme.window.color)
+		gpu.set(screen.width,pos+1,scroll_chars[ipos])
+	end
 end
 
 local function colorChunker(ostr,kill)
@@ -410,15 +443,17 @@ local customGPU = {
 }
 
 local function _redraw(first)
+	local yoffset
+	local treewidth = persist.treewidth
 	if config.wocchat.usetree then
-		local treewidth = persist.treewidth
+		yoffset = 0
 		if dirty.blocks then
 			treewidth = 8
 			for i = 1,#blocks do
 				local block = blocks[i]
 				if block.type == "server" or block.type == "dead_server" then
 					treewidth=math.max(treewidth,unicode.len(theme.tree.group.prefix.str .. (block.support.NETWORK or block.name)))
-				elseif block.type == "channel" or block.type == "dead_channel" then
+				else
 					treewidth=math.max(treewidth,unicode.len(theme.tree.entry.prefix.str .. block.name))
 				end
 			end
@@ -430,9 +465,17 @@ local function _redraw(first)
 			drawTree(treewidth)
 			dirty.blocks = false
 		end
-		if treewidth ~= persist.treewidth then
-			dirty.window = true
-			dirty.title = true
+	else
+		treewidth, yoffset = -1, -1
+		if dirty.blocks then
+			drawTabs()
+			dirty.blocks = false
+		end
+	end
+	if treewidth ~= persist.treewidth then
+		dirty.window = true
+		dirty.title = true
+		if treewidth ~= -1 then
 			setBackground(theme.window.color)
 			setForeground(theme.tree.color)
 			gpu.fill(treewidth+1,2,1,screen.height-2,"▌")
@@ -440,59 +483,59 @@ local function _redraw(first)
 			gpu.set(treewidth+1,screen.height,"▌")
 			gpu.set(treewidth+1,1,"▌")
 		end
-		local listwidth = persist.listwidth
-		if dirty.nicks then
-			listwidth = -1
-			if blocks[blocks.active].names ~= nil then
-				local names = blocks[blocks.active].names
-				local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
-				prefix = prefix:match("%)(.*)")
-				for i = 1,#names do
-					listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[" .. prefix .. "]") and 0 or 1))
-				end
-				listwidth=listwidth+1
-				drawList(listwidth)
-			end
-			dirty.nicks = false
-		end
-		if listwidth ~= persist.listwidth then
-			dirty.window = true
-			dirty.title = true
-			setBackground(theme.tree.color)
-			setForeground(theme.window.color)
-			gpu.fill(screen.width-listwidth,2,1,screen.height-2,"▌")
-			setForeground(theme.textbar.color)
-			gpu.set(screen.width-listwidth,screen.height,"▌")
-			gpu.set(screen.width-listwidth,1,"▌")
-		end
-		if dirty.title then
-			local block = blocks[blocks.active]
-			local title
-			if block.title ~= nil then
-				title = block.title
-			elseif block.support and block.support.NETWORK then
-				title = block.support.NETWORK .. " Main Window"
-			else
-				title = block.name .. " Main Window"
-			end
-			drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,title)
-			dirty.title = false
-		end
-		if dirty.window then
-			drawWindow(treewidth+2,screen.width-treewidth-listwidth-2,screen.height-2,blocks[blocks.active].text)
-			dirty.window = false
-		end
-		if first then
-			drawTextbar(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,"")
-		end
-		customGPU:gpuSetup(treewidth+2,screen.height,screen.width-treewidth-listwidth-2,1)
-		persist.window_width = screen.width-treewidth-listwidth-2
-		persist.window_x = treewidth+2
-		persist.listwidth = listwidth
-		persist.treewidth = treewidth
-	else
-		
 	end
+	local listwidth = persist.listwidth
+	if dirty.nicks then
+		listwidth = -1
+		if blocks[blocks.active].names ~= nil then
+			local names = blocks[blocks.active].names
+			local prefix = blocks[blocks.active].parent.support.PREFIX or default_support.PREFIX
+			prefix = prefix:match("%)(.*)")
+			for i = 1,#names do
+				listwidth=math.max(listwidth,unicode.len(names[i])+(names[i]:find("^[" .. prefix .. "]") and 0 or 1))
+			end
+			listwidth=listwidth+1
+			drawList(listwidth,screen.height+yoffset)
+		end
+		dirty.nicks = false
+	end
+	if listwidth ~= persist.listwidth then
+		dirty.window = true
+		dirty.title = true
+		setBackground(theme.tree.color)
+		setForeground(theme.window.color)
+		gpu.fill(screen.width-listwidth,2,1,screen.height-2+yoffset,"▌")
+		setForeground(theme.textbar.color)
+		gpu.set(screen.width-listwidth,screen.height+yoffset,"▌")
+		gpu.set(screen.width-listwidth,1,"▌")
+	end
+	if dirty.title then
+		local block = blocks[blocks.active]
+		local title
+		if block.title ~= nil then
+			title = block.title
+		elseif block.support and block.support.NETWORK then
+			title = block.support.NETWORK .. " Main Window"
+		else
+			title = block.name .. " Main Window"
+		end
+		drawTextbar(treewidth+2,1,screen.width-treewidth-listwidth-2,title)
+		dirty.title = false
+	end
+	if dirty.window then
+		drawWindow(treewidth+2,screen.width-treewidth-listwidth-2,screen.height-2+yoffset,blocks[blocks.active].text)
+		dirty.window = false
+	end
+	if first then
+		drawTextbar(treewidth+2,screen.height+yoffset,screen.width-treewidth-listwidth-2,"")
+	end
+	customGPU:gpuSetup(treewidth+2,screen.height+yoffset,screen.width-treewidth-listwidth-2,1)
+
+	persist.window_width = screen.width-treewidth-listwidth-2
+	persist.window_x = treewidth+2
+	persist.listwidth = listwidth
+	persist.treewidth = treewidth
+
 	setBackground(theme.textbar.color)
 	setForeground(theme.textbar.text.color)
 end
@@ -1066,7 +1109,9 @@ function commands.part(args,opts)
 		helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
 	else
 		if #args == 0 then
-			if blocks[blocks.active].type ~= "channel" then
+			if blocks[blocks.active].type == "dead_channel" then
+				helper.closeChannel(blocks[blocks.active])
+			elseif blocks[blocks.active].type ~= "channel" then
 				helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
 			elseif not (block.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
 				helper.closeChannel(blocks[blocks.active])
@@ -1143,6 +1188,7 @@ local function main()
 	end
 	term.setCursor(1,1)
 	function persist.mouse(event, addr, x, y, button)
+		local ok,err = pcall(function()
 		if event == "touch" then
 			if config.wocchat.usetree then
 				if y <= #blocks and x <= persist.window_x-2 and y ~= blocks.active then
@@ -1151,12 +1197,34 @@ local function main()
 					redraw()
 				end
 			else
+				if y == screen.height and x > 1 then
+					local bx = 2
+					for i = 1,#blocks do
+						local block = blocks[i]
+						local name = block.name
+						if block.type == "server" or block.type == "dead_server" then
+							name = block.support.NETWORK or block.name
+						end
+						local bnx = bx+unicode.wlen(name)
+						if x >= bx and x <= bnx then
+							blocks.active = i
+							helper.markDirty("blocks","window","nicks","title")
+							redraw()
+							break
+						end
+						bx=bnx+1
+					end
+				end
 			end
 		elseif event == "scroll" then
-			if x > screen.width-persist.listwidth then
+			if x > screen.width-persist.listwidth and y <= screen.height+(config.wocchat.usetree and 0 or 1) then
 				blocks[blocks.active].scroll = blocks[blocks.active].scroll - button
 				dirty.nicks = true
 			end
+		end
+		end)
+		if not ok then
+			helper.addText("EventErr",err,theme.actions.error.color)
 		end
 	end
 	event.listen("touch",persist.mouse)
@@ -1200,7 +1268,7 @@ local function main()
 						local message = line:match("^ :(.*)$")
 						local hco, hcerr = pcall(handleCommand, block, prefix, command, args, message)
 						if not hco then
-							helper.addTextToBlock(block,"LuaError",hcerr)
+							helper.addTextToBlock(block,"LuaError",hcerr,theme.actions.error.color)
 						end
 						helper.addTextToBlock(blocks[1],"RAW",origline)
 					end
@@ -1240,6 +1308,8 @@ local function main()
 		elseif blocks[blocks.active].type == "channel" then
 			helper.write(blocks[blocks.active].parent.sock, string.format("PRIVMSG %s :%s",blocks[blocks.active].name,line))
 			helper.addText(blocks[blocks.active].parent.nick,line)
+		else
+			helper.addText("","Cannot type on this window")
 		end
 	end
 end
