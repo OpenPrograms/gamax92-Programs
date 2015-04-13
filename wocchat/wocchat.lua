@@ -172,6 +172,7 @@ local dirty = {
 
 local default_support = {
 	PREFIX="(ov)@+",
+	CHANTYPES="#&",
 }
 
 local function drawTree(width)
@@ -340,6 +341,7 @@ local function drawWindow(x,width,height,irctext)
 	end
 	for i = 1,#buffer do
 		if buffer[i][1] ~= "" then
+			setBackground(theme.window.color)
 			if type(nickcolors) == "number" then
 				setForeground(nickcolors)
 			else
@@ -373,7 +375,6 @@ local function drawWindow(x,width,height,irctext)
 					xpos = xpos + unicode.wlen(chunk[j])
 				end
 			end
-			setBackground(theme.window.color)
 		else
 			setForeground(buffer[i][3] or theme.window.text.color)
 			gpu.set(x+nickwidth+1,i+1,buffer[i][2])
@@ -557,7 +558,7 @@ function helper.joinServer(server)
 	blocks.active = #blocks
 	helper.markDirty("blocks","window","nicks","title")
 end
-function helper.joinChannel(block,channel)
+function helper.joinChannel(block,channel,switch)
 	local cblock = {type="channel",name=channel,text={},title="",names={},parent=block,scroll=1}
 	local look = block
 	if #block.children > 0 then
@@ -571,8 +572,9 @@ function helper.joinChannel(block,channel)
 		end
 	end
 	block.children[#block.children+1] = cblock
-	blocks.active = look
+	if not switch then blocks.active = look end
 	helper.markDirty("blocks","window","nicks","title")
+	return cblock
 end
 function helper.findChannel(block,channel)
 	local children = block.children
@@ -580,6 +582,37 @@ function helper.findChannel(block,channel)
 		if children[i].name == channel then
 			return children[i]
 		end
+	end
+end
+function helper.findOrJoinChannel(block,channel)
+	local cblock = helper.findChannel(block,channel)
+	if cblock then return cblock end
+	cblock = helper.joinChannel(block,channel,true)
+	cblock.title = "Dialog with " .. channel
+	return cblock
+end
+function helper.closeChannel(cblock)
+	local block = cblock.parent
+	for i = 1,#block.children do
+		if block.children[i] == cblock then
+			table.remove(block.children,i)
+			break
+		end
+	end
+	local decrement = true
+	for i = 1,#blocks do
+		if blocks[i] == cblock then
+			table.remove(blocks,i)
+			break
+		elseif blocks[i] == blocks[blocks.active] then
+			decrement = false
+		end
+	end
+	if decrement then
+		blocks.active = blocks.active - 1
+		helper.markDirty("blocks","window","nicks","title")
+	else
+		dirty.blocks = true
 	end
 end
 function helper.sortList(block)
@@ -784,27 +817,7 @@ local function handleCommand(block, prefix, command, args, message)
 		local cblock = helper.findChannel(block,args[1])
 		local name = name(prefix)
 		if name == nick then
-			for i = 1,#block.children do
-				if block.children[i] == cblock then
-					table.remove(block.children,i)
-					break
-				end
-			end
-			local decrement = true
-			for i = 1,#blocks do
-				if blocks[i] == cblock then
-					table.remove(blocks,i)
-					break
-				elseif blocks[i] == blocks[blocks.active] then
-					decrement = false
-				end
-			end
-			if decrement then
-				blocks.active = blocks.active - 1
-				helper.markDirty("blocks","window","nicks","title")
-			else
-				dirty.blocks = true
-			end
+			helper.closeChannel(cblock)
 		else
 			helper.addTextToBlock(cblock,"*",name .. " has left the room (quit: " .. (message or "Quit") .. ").",theme.actions.part.color)
 			for i = 1,#cblock.names do
@@ -833,6 +846,10 @@ local function handleCommand(block, prefix, command, args, message)
 			dirty.nicks = true
 		end
 	elseif command == "PRIVMSG" then
+		local channel = args[1]
+		if not (block.support.CHANTYPES or default_support.CHANTYPES):find(args[1]:sub(1,1),nil,true) then
+			channel = name(prefix)
+		end
 		local ctcp = message:match("^\1(.-)\1$")
 		if ctcp then
 			local ctcp, param = ctcp:match("^(%S+) ?(.-)$")
@@ -841,7 +858,7 @@ local function handleCommand(block, prefix, command, args, message)
 			end
 			ctcp = ctcp:upper()
 			if ctcp == "ACTION" then
-				local cblock = helper.findChannel(block,args[1])
+				local cblock = helper.findOrJoinChannel(block,channel)
 				helper.addTextToBlock(cblock,"*", name(prefix) .. " " .. param)
 			elseif ctcp == "TIME" then
 				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001TIME " .. os.date() .. "\001")
@@ -854,7 +871,7 @@ local function handleCommand(block, prefix, command, args, message)
 			if string.find(message, nick) then
 				computer.beep()
 			end
-			local cblock = helper.findChannel(block,args[1])
+			local cblock = helper.findOrJoinChannel(block,channel)
 			helper.addTextToBlock(cblock, name(prefix), message)
 		end
 	elseif command == "NOTICE" then
@@ -1051,6 +1068,8 @@ function commands.part(args,opts)
 		if #args == 0 then
 			if blocks[blocks.active].type ~= "channel" then
 				helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
+			elseif not (block.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
+				helper.closeChannel(blocks[blocks.active])
 			else
 				helper.write(sock, string.format("PART %s", blocks[blocks.active].name))
 			end
