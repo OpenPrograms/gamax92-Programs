@@ -2,6 +2,7 @@
 WocChat - the Wonderful OpenComputers Chat client
 Written by gamax92
 Some code borrowed from OpenIRC
+Some code borrowed from wget
 --]]
 local function errprint(msg)io.stderr:write(msg.."\n")end
 local component = require("component")
@@ -17,14 +18,15 @@ end
 
 local version = "v0.0.1"
 
+local bit32 = require("bit32")
 local computer = require("computer")
 local event = require("event")
+local fs = require("filesystem")
 local internet = require("internet")
 local shell = require("shell")
 local term = require("term")
 local text = require("text")
 local unicode = require("unicode")
-local bit32 = require("bit32")
 
 local args, options = shell.parse(...)
 
@@ -1167,6 +1169,33 @@ function commands.redraw(args,opts)
 end
 
 local function main()
+	if not fs.exists("/etc/wocchat.cfg") or options["dl-config"] then
+		print("Downloading config ...")
+		local f, reason = io.open("/etc/wocchat.cfg", "wb")
+		if not f then
+			errprint("Failed to open file for writing: " .. reason)
+			return
+		end
+		local result, response = pcall(internet.request, "https://raw.githubusercontent.com/OpenPrograms/gamax92-Programs/master/wocchat/wocchat.cfg")
+		if result then
+			local result, reason = pcall(function()
+				for chunk in response do
+					f:write(chunk)
+				end
+			end)
+			f:close()
+			if not result then
+				fs.remove("/etc/wocchat.cfg")
+				errprint("HTTP request failed: " .. reason)
+				return
+			end
+		else
+			f:close()
+			fs.remove("/etc/wocchat.cfg")
+			errprint("HTTP request failed: " .. response)
+			return
+		end		
+	end
 	print("Loading config ...")
 	loadConfig()
 	if config.wocchat.default_nick == nil then
