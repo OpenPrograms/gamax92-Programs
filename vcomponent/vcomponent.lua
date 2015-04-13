@@ -1,5 +1,6 @@
 local component = require("component")
 local computer = require("computer")
+local event = require("event")
 
 local proxylist = {}
 local typelist = {}
@@ -85,6 +86,7 @@ function vcomponent.register(address, type, proxy)
 	proxylist[address] = proxy
 	typelist[address] = type
 	computer.pushSignal("component_added",address,type)
+	event.pull("component_added")
 	return true
 end
 
@@ -98,9 +100,10 @@ function vcomponent.unregister(address)
 		end
 	end
 	local thetype = typelist[address]
+	computer.pushSignal("component_removed",address,thetype)
+	event.pull("component_removed") --pull the signal through the event api
 	proxylist[address] = nil
 	typelist[address] = nil
-	computer.pushSignal("component_removed",address,thetype)
 	return true
 end
 
