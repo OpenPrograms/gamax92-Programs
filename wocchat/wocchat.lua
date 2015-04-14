@@ -1427,7 +1427,27 @@ local function main()
 		end
 		setBackground(theme.textbar.color)
 		setForeground(theme.textbar.text.color)
-		local line = term.read(history)
+		local line = term.read(history,nil,function(line,pos)
+			local block = blocks[blocks.active]
+			if block.names == nil then
+				return {}
+			end
+			local nprefix = (block.parent.support.PREFIX or default_support.PREFIX):match("%)(.*)")
+			local base, word = (" " .. line):match("(.*%s)(.*)")
+			base,word = base:sub(2),word:lower()
+			local list = {}
+			for i = 1,#block.names do
+				local name = block.names[i]:gsub("^[" .. nprefix .. "]+","")
+				if name:sub(1,#word):lower() == word then
+					list[#list+1] = base .. name .. (base == "" and ": " or "")
+				end
+			end
+			table.sort(list,function(a,b) return a:lower() < b:lower() end)
+			if #list == 1 then
+				list[2] = list[1] -- Prevent term.read stupidity
+			end
+			return list
+		end)
 		if line ~= nil then line = text.trim(line) end
 		if line == "/exit" then break end
 		if line:sub(1,1) == "/" and line:sub(1,2) ~= "//" then
