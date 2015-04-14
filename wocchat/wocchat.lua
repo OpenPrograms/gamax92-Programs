@@ -156,11 +156,67 @@ local function loadConfig()
 	end})
 end
 
+local function configSort(a,b)
+	local ta,tb = type(a),type(b)
+	if ta == tb then
+		return a < b
+	end
+	return ta == "number"
+end
+local saveSection
+function saveSection(file,tbl,name)
+	name = name or ""
+	local keys = {}
+	for k,v in pairs(tbl) do
+		keys[#keys+1] = k
+	end
+	table.sort(keys,configSort)
+	for i = 1,#keys do
+		local k,v = keys[i],tbl[keys[i]]
+		local ndk = (name == "" and k or name .. "." .. k)
+		if type(v) == "table" then
+			saveSection(file,v,ndk)
+		elseif type(k) == "number" and type(v) == "number" then
+			file:write(ndk .. "=" .. string.format("0x%06X\n",v))
+		elseif type(v) == "string" then
+			file:write(ndk .. "=\"" .. v .. "\"\n")
+		else
+			file:write(ndk .. "=" .. tostring(v) .. "\n")
+		end
+	end
+end
+local sections = {wocchat=1,default=2,server=3,theme=4}
+local function sectionSort(a,b)
+	if sections[a] and sections[b] then
+		return sections[a] < sections[b]
+	elseif not sections[a] and not sections[b] then
+		return a < b
+	end
+	return sections[a] ~= nil
+end
+local function saveConfig()
+	local file, err = io.open("/etc/wocchat.cfg","wb")
+	if not file then
+		return false, err
+	end
+	local keys = {}
+	for k,v in pairs(config) do
+		keys[#keys+1] = k
+	end
+	table.sort(keys,sectionSort)
+	for i = 1,#keys do
+		file:write("[" .. keys[i] .. "]\n")
+		saveSection(file, config[keys[i]])
+		file:write("\n")
+	end
+	file:close()
+	return true
+end
+
 local function simpleHash(str)
 	local v = 0
 	for char in str:gmatch(".") do
-		v = bit32.lshift(v,5) + bit32.rshift(v,27)
-		v = bit32.bxor(v,char:byte())
+		v = bit32.bxor(bit32.lrotate(v,5),char:byte())
 	end
 	return v
 end
@@ -592,12 +648,12 @@ function helper.getSocket()
 end
 function helper.joinServer(server)
 	local server,id = config.server[server],server
-	local nick = config.wocchat.default_nick
-	block = {type="server",name=server.name,id=id,text={},nick=nick,children={},support={}}
+	local nick = config.default.nick
+	local block = {type="server",name=server.name,id=id,text={},nick=nick,children={},support={}}
 	block.sock = internet.open(server.server)
 	block.sock:setTimeout(0.05)
-	block.sock:write(string.format("NICK %s\r\n", nick))
-	block.sock:write(string.format("USER %s 0 * :%s [OpenComputers]\r\n", nick:lower(), nick))
+	block.sock:write(string.format("NICK %s\r\n", config.default.nick))
+	block.sock:write(string.format("USER %s 0 * :%s\r\n", config.default.user, config.default.realname))
 	block.sock:flush()
 	blocks[#blocks + 1] = block
 	blocks.active = #blocks
@@ -1078,9 +1134,11 @@ function commands.help(...)
 	table.sort(names)
 	helper.addText("","Commands Available: " .. table.concat(names,", "))
 end
-function commands.server(args,opts)
+function commands.server(...)
+	local args,opts = shell.parse(...)
 end
-function commands.connect(args,opts)
+function commands.connect(...)
+	local args,opts = shell.parse(...)
 	if #args == 0 then
 		helper.addText("","Usage: /connect serverid")
 	elseif config.server[args[1]] == nil then
@@ -1090,7 +1148,8 @@ function commands.connect(args,opts)
 		redraw()
 	end
 end
-function commands.join(args,opts)
+function commands.join(...)
+	local args = {...}
 	if #args == 0 then
 		helper.addText("","Usage: /join channel1 channel2 channel3 ...")
 	else
@@ -1105,17 +1164,18 @@ function commands.join(args,opts)
 		end
 	end
 end
-function commands.part(args,opts)
+function commands.part(...)
+	local args = {...}
 	local sock = helper.getSocket()
-	if sock == nil then
+	if blocks[blocks.active].type == "dead_channel" then
+		helper.closeChannel(blocks[blocks.active])
+	elseif sock == nil then
 		helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
 	else
 		if #args == 0 then
-			if blocks[blocks.active].type == "dead_channel" then
-				helper.closeChannel(blocks[blocks.active])
-			elseif blocks[blocks.active].type ~= "channel" then
+			if blocks[blocks.active].type ~= "channel" then
 				helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
-			elseif not (block.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
+			elseif not (blocks[blocks.active].parent.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
 				helper.closeChannel(blocks[blocks.active])
 			else
 				helper.write(sock, string.format("PART %s", blocks[blocks.active].name))
@@ -1128,7 +1188,17 @@ function commands.part(args,opts)
 		end
 	end
 end
-function commands.raw(args,opts)
+function commands.quit(...)
+	local args = {...}
+	local sock = helper.getSocket()
+	if sock == nil then
+		helper.addText("","/quit cannot be performed on this block",theme.actions.error.color)
+	else
+		helper.write(sock, "QUIT :" .. (#args > 0 and table.concat(args," ") or config.default.quit))
+	end
+end
+function commands.raw(...)
+	local args = {...}
 	if #args ~= 0 then
 		local sock = helper.getSocket()
 		if sock == nil then
@@ -1138,8 +1208,11 @@ function commands.raw(args,opts)
 		end
 	end
 end
-function commands.me(args,opts)
-	if #args ~= 0 then
+function commands.me(...)
+	local args = {...}
+	if #args == 0 then
+		helper.addText("","Usage: /me <action>")
+	else
 		local sock = helper.getSocket()
 		if blocks[blocks.active].type ~= "channel" or sock == nil then
 			helper.addText("","/me cannot be performed on this block",theme.actions.error.color)
@@ -1149,7 +1222,8 @@ function commands.me(args,opts)
 		end
 	end
 end
-function commands.redraw(args,opts)
+function commands.redraw(...)
+	local args = {...}
 	if #args == 0 then
 		helper.markDirty("blocks","window","nicks","title")
 	else
@@ -1166,6 +1240,32 @@ function commands.redraw(args,opts)
 		end
 	end
 	redraw()
+end
+function commands.msg(...)
+	local args = {...}
+	if #args < 2 then
+		helper.addText("","Usage: /msg <nickname> <message>")
+	else
+		local sock = helper.getSocket()
+		if sock == nil then
+			helper.addText("","/msg cannot be performed on this block",theme.actions.error.color)
+		else
+			helper.write(sock, string.format("PRIVMSG %s :%s", args[1], table.concat(args," ",2)))
+			local block = blocks[blocks.active]
+			if block.parent ~= nil then
+				block = block.parent
+			end
+			if (block.support.CHANTYPES or default_support.CHANTYPES):find(args[1]:sub(1,1),nil,true) then
+				local cblock = helper.findChannel(block,args[1])
+				if cblock then
+					helper.addTextToBlock(cblock,block.nick,table.concat(args," ",2))
+				end
+			else
+				local cblock = helper.findOrJoinChannel(block,args[1])
+				helper.addTextToBlock(cblock,block.nick,table.concat(args," ",2))
+			end
+		end
+	end
 end
 
 local function main()
@@ -1198,10 +1298,16 @@ local function main()
 	end
 	print("Loading config ...")
 	loadConfig()
-	if config.wocchat.default_nick == nil then
+	if config.default.nick == nil then
 		term.write("Enter your default nickname: ")
 		local nick = term.read()
-		config.wocchat.default_nick = text.trim(nick)
+		config.default.nick = text.trim(nick)
+	end
+	if config.default.user == nil then
+		config.default.user = config.default.nick:lower()
+	end
+	if config.default.realname == nil then
+		config.default.realname = config.default.nick .. " [OpenComputers]"
 	end
 	print("Saving screen ...")
 	saveScreen()
@@ -1324,17 +1430,20 @@ local function main()
 		local line = term.read(history)
 		if line ~= nil then line = text.trim(line) end
 		if line == "/exit" then break end
-		if line:sub(1,1) == "/" then
+		if line:sub(1,1) == "/" and line:sub(1,2) ~= "//" then
 			local parse = {}
 			for part in (line:sub(2) .. " "):gmatch("(.-) ") do
 				parse[#parse+1] = part
 			end
 			if commands[parse[1]] ~= nil then
-				commands[parse[1]](shell.parse(table.unpack(parse,2)))
+				commands[parse[1]](table.unpack(parse,2))
 			else
 				helper.addText("","No such command: " .. parse[1])
 			end
 		elseif blocks[blocks.active].type == "channel" then
+			if line:sub(1,2) == "//" then
+				line = line:sub(2)
+			end
 			helper.write(blocks[blocks.active].parent.sock, string.format("PRIVMSG %s :%s",blocks[blocks.active].name,line))
 			helper.addText(blocks[blocks.active].parent.nick,line)
 		else
@@ -1370,6 +1479,11 @@ if persist.timer then
 end
 if screen then
 	restoreScreen()
+end
+print("Saving config ...")
+local sok,srr = saveConfig()
+if not sok then
+	errprint("Failed to save config: " .. srr)
 end
 if not stat then
 	errprint(err)
