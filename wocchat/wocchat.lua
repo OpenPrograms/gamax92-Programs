@@ -243,16 +243,14 @@ local function drawTree(width)
 			setBackground(theme.tree.active.color)
 			gpu.fill(1,i,width,1," ")
 		end
+		setForeground(block.new and theme.tree.new.color or block.type:sub(1,5) == "dead_" and theme.tree.dead.color or block.type == "channel" and theme.tree.entry.color or theme.tree.group.color)
 		if block.type == "main" then
-			setForeground(theme.tree.group.color)
 			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.name)
 		elseif block.type == "server" or block.type == "dead_server" then
-			setForeground(block.type == "server" and theme.tree.group.color or theme.tree.dead.color)
 			gpu.set(unicode.wlen(theme.tree.group.prefix.str)+1,y,block.support.NETWORK or block.name)
 			setForeground(theme.tree.group.prefix.color)
 			gpu.set(1,y,theme.tree.group.prefix.str)
 		elseif block.type == "channel" or block.type == "dead_channel" then
-			setForeground(block.type == "channel" and theme.tree.entry.color or theme.tree.dead.color)
 			gpu.set(unicode.wlen(theme.tree.entry.prefix.str)+1,y,block.name)
 			setForeground(theme.tree.entry.prefix.color)
 			local siblings = block.parent.children
@@ -586,6 +584,9 @@ local function _redraw(first)
 	end
 	if first then
 		drawTextbar(treewidth+2,screen.height+yoffset,screen.width-treewidth-listwidth-2,"")
+	elseif listwidth < persist.listwidth then
+		setBackground(theme.textbar.color)
+		gpu.fill(screen.width-persist.listwidth,screen.height+yoffset,persist.listwidth-listwidth,1," ")
 	end
 	customGPU:gpuSetup(treewidth+2,screen.height+yoffset,screen.width-treewidth-listwidth-2,1)
 
@@ -603,9 +604,10 @@ local function redraw(first)
 		local ok, err = xpcall(_redraw, debug.traceback, first)
 		if not ok then
 			redrawHang = true
-			gpu.setPaletteColor(0,0xFF0000)
-			gpu.setForeground(0xFF0000)
-			gpu.setBackground(0)
+			gpu.setPaletteColor(theme.textbar.color,0)
+			gpu.setPaletteColor(theme.textbar.text.color,0xFF0000)
+			setForeground(theme.textbar.text.color)
+			setBackground(theme.textbar.color)
 			if config.wocchat.usetree then
 				gpu.fill(1,1,screen.width,screen.height-1," ")
 			else
@@ -630,6 +632,9 @@ function helper.addTextToBlock(block,user,msg,color)
 	block.text[#block.text+1] = {user,msg,color}
 	if block == blocks[blocks.active] then
 		dirty.window = true
+	else
+		block.new = true
+		dirty.blocks = true
 	end
 end
 function helper.addText(user,msg,color)
@@ -680,7 +685,7 @@ end
 function helper.findChannel(block,channel)
 	local children = block.children
 	for i = 1,#children do
-		if children[i].name == channel then
+		if children[i].name:lower() == channel:lower() then
 			return children[i]
 		end
 	end
@@ -976,7 +981,19 @@ local function handleCommand(block, prefix, command, args, message)
 			helper.addTextToBlock(cblock, name(prefix), message)
 		end
 	elseif command == "NOTICE" then
-		helper.addTextToBlock(block,"*","[NOTICE] " .. message)
+		local channel = args[1]
+		if not (block.support.CHANTYPES or default_support.CHANTYPES):find(args[1]:sub(1,1),nil,true) then
+			channel = name(prefix)
+		end
+		if string.find(message, nick) then
+			computer.beep()
+		end
+		if channel == prefix then
+			helper.addTextToBlock(block, "*", "[NOTICE] " .. message)
+		else
+			local cblock = helper.findOrJoinChannel(block,channel)
+			helper.addTextToBlock(cblock, "-" .. name(prefix) .. "-", message)
+		end
 	elseif command == "ERROR" then
 		helper.addTextToBlock(block,"*","[ERROR] " .. message)
 	elseif tonumber(command) and ignore[tonumber(command)] then
@@ -1267,6 +1284,10 @@ function commands.msg(...)
 		end
 	end
 end
+function commands.clear(...)
+	blocks[blocks.active].text = {}
+	dirty.window = true
+end
 
 local function main()
 	if not fs.exists("/etc/wocchat.cfg") or options["dl-config"] then
@@ -1328,6 +1349,7 @@ local function main()
 			if config.wocchat.usetree then
 				if y <= #blocks and x <= persist.window_x-2 and y ~= blocks.active then
 					blocks.active = y
+					blocks[blocks.active].new = nil
 					helper.markDirty("blocks","window","nicks","title")
 					redraw()
 				end
@@ -1350,6 +1372,11 @@ local function main()
 						bx=bnx+1
 					end
 				end
+			end
+			if x == screen.width and y <= (config.wocchat.usetree and screen.height or screen.height - 1) and blocks[blocks.active].names ~= nil then
+				local height = (config.wocchat.usetree and screen.height or screen.height - 1)
+				blocks[blocks.active].scroll = math.floor((y-1)/(height-1)*(#blocks[blocks.active].names-height)+1)
+				dirty.nicks = true
 			end
 		elseif event == "scroll" then
 			if x > screen.width-persist.listwidth and y <= screen.height+(config.wocchat.usetree and 0 or 1) then
@@ -1405,7 +1432,9 @@ local function main()
 						if not hco then
 							helper.addTextToBlock(block,"LuaError",hcerr,theme.actions.error.color)
 						end
-						helper.addTextToBlock(blocks[1],"RAW",origline)
+						if config.wocchat.showraw then
+							helper.addTextToBlock(blocks[1],"RAW",origline)
+						end
 					end
 				until not ok
 			end
