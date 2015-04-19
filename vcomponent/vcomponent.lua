@@ -182,4 +182,14 @@ function vcomponent.resolve(address, componentType)
 	return nil, "no such component"
 end
 
+local r = math.random
+function vcomponent.uuid()
+	return string.format("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+	r(0,255),r(0,255),r(0,255),r(0,255),
+	r(0,255),r(0,255),
+	r(64,79),r(0,255),
+	r(128,191),r(0,255),
+	r(0,255),r(0,255),r(0,255),r(0,255),r(0,255),r(0,255))
+end
+
 return vcomponent
