@@ -3,5 +3,7 @@ local vcomp = require("vcomponent")
 local proxy = {
 	test = function(something) return type(something) end
 }
-
-vcomp.register("LALWZADDR","testcomp",proxy)
+local docs = {
+	test = "function(value:something):string -- I do stuff."
+}
+vcomp.register("LALWZADDR","testcomp",proxy,docs)

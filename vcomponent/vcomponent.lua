@@ -2,13 +2,15 @@ local component = require("component")
 local computer = require("computer")
 
 local proxylist = {}
+local proxyobjs = {}
 local typelist = {}
+local doclist = {}
 
 local oproxy = component.proxy
 function component.proxy(address)
 	checkArg(1,address,"string")
-	if proxylist[address] ~= nil then
-		return proxylist[address]
+	if proxyobjs[address] ~= nil then
+		return proxyobjs[address]
 	end
 	return oproxy(address)
 end
@@ -52,9 +54,36 @@ function component.doc(address, method)
 		if proxylist[address][method] == nil then
 			error("no such method",2)
 		end
-		return nil -- No doc support
+		if doclist[address] ~= nil then
+			return doclist[address][method]
+		end
+		return nil
 	end
 	return odoc(address, method)
+end
+
+local oslot = component.slot
+function component.slot(address)
+	checkArg(1,address,"string")
+	if proxylist[address] ~= nil then
+		return -1 -- vcomponents do not exist in a slot
+	end
+	return oslot(address)
+end
+
+local omethods = component.methods
+function component.methods(address)
+	checkArg(1,address,"string")
+	if proxylist[address] ~= nil then
+		local methods = {}
+		for k,v in pairs(proxylist[address]) do
+			if type(v) == "function" then
+				methods[k] = true -- All vcomponent methods are direct
+			end
+		end
+		return methods
+	end
+	return omethods(address)
 end
 
 local oinvoke = component.invoke
@@ -70,21 +99,47 @@ function component.invoke(address, method, ...)
 	return oinvoke(address, method, ...)
 end
 
+local ofields = component.fields
+function component.fields(address)
+	checkArg(1,address,"string")
+	if proxylist[address] ~= nil then
+		return {} -- What even is this?
+	end
+	return ofields(address)
+end
+
+local componentCallback =
+{
+	__call = function(self, ...) return proxylist[self.address][self.name](...) end,
+	__tostring = function(self) return (doclist[self.address] ~= nil and doclist[self.address][self.name] ~= nil) and doclist[self.address][self.name] or "function" end
+}
+
 local vcomponent = {}
 
-function vcomponent.register(address, type, proxy)
+function vcomponent.register(address, ctype, proxy, doc)
 	checkArg(1,address,"string")
-	checkArg(2,proxy,"table")
+	checkArg(2,ctype,"string")
+	checkArg(3,proxy,"table")
 	if proxylist[address] ~= nil then
 		return nil, "component already at address"
 	elseif component.type(address) ~= nil then
 		return nil, "cannot register over real component"
 	end
 	proxy.address = address
-	proxy.type = type
+	proxy.type = ctype
+	local proxyobj = {}
+	for k,v in pairs(proxy) do
+		if type(v) == "function" then
+			proxyobj[k] = setmetatable({name=k,address=address},componentCallback)
+		else
+			proxyobj[k] = v
+		end
+	end
 	proxylist[address] = proxy
-	typelist[address] = type
-	computer.pushSignal("component_added",address,type)
+	proxyobjs[address] = proxyobj
+	typelist[address] = ctype
+	doclist[address] = doc
+	computer.pushSignal("component_added",address,ctype)
 	return true
 end
 
@@ -99,7 +154,9 @@ function vcomponent.unregister(address)
 	end
 	local thetype = typelist[address]
 	proxylist[address] = nil
+	proxyobjs[address] = nil
 	typelist[address] = nil
+	doclist[address] = nil
 	computer.pushSignal("component_removed",address,thetype)
 	return true
 end

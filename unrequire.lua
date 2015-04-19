@@ -19,7 +19,7 @@ local args, options = shell.parse(...)
 if #args == 0 then
 	print
 [[Usage: unrequire list
-       unrequire unload <name>
+       unrequire unload <name> ...
        unrequire unload-all
 Options:
     -v --verbose  List unloaded libraries
@@ -36,14 +36,17 @@ if args[1] == "list" then
 elseif args[1] == "unload" then
 	if #args < 2 then
 		errprint("unrequire: missing name")
-	elseif package.loaded[args[2]] == nil then
-		errprint("unrequire: '" .. args[2] .. "' not loaded")
-	elseif blacklist[args[2]] and not options.unsafe then
-		errprint("unrequire: refusing to unload '" .. args[2] .. "'\nUse --unsafe to override this")
-	else
-		package.loaded[args[2]] = nil
-		if options.v or options.verbose then
-			print("unloaded '" .. args[2] .. "'")
+	end
+	for i = 2,#args do
+		if package.loaded[args[i]] == nil then
+			errprint("unrequire: '" .. args[i] .. "' not loaded")
+		elseif blacklist[args[i]] and not options.unsafe then
+			errprint("unrequire: refusing to unload '" .. args[i] .. "'\nUse --unsafe to override this")
+		else
+			package.loaded[args[i]] = nil
+			if options.v or options.verbose then
+				print("unloaded '" .. args[i] .. "'")
+			end
 		end
 	end
 elseif args[1] == "unload-all" then
