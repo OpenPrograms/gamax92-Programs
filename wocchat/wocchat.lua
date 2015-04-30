@@ -51,67 +51,22 @@ end
 
 local function saveScreen()
 	local width,height = gpu.getResolution()
-	screen = {palette={},cfg={},cbg={},width=width,height=height}
+	screen = {palette={},width=width,height=height}
 	for i = 0,15 do
 		screen.palette[i] = gpu.getPaletteColor(i)
 	end
 	screen.bg = {gpu.getBackground()}
 	screen.fg = {gpu.getForeground()}
-	for y = 1,height do
-		screen[y] = {}
-		for x = 1,width do
-			screen[y][x] = { gpu.get(x,y) }
-			screen.cfg[screen[y][x][2] .. "_" .. tostring(screen[y][x][4])] = true
-			screen.cbg[screen[y][x][3] .. "_" .. tostring(screen[y][x][5])] = true
-		end
-	end
-	screen.cursor = { term.getCursor() }
 end
 
 local function restoreScreen()
-	gpu.setForeground(0xFFFFFF)
-	gpu.setBackground(0)
-	gpu.fill(1,1,screen.width,screen.height," ")
-	gpu.set(screen.width/2-17,screen.height/2,"Restoring screen, please wait ...")
-	for i = 0,15 do
-		gpu.fill(screen.width/2-16,screen.height/2+1,i*2+2,1,"█")
-		gpu.setPaletteColor(i,screen.palette[i])
-	end
-	for bgs in pairs(screen.cbg) do
-		local bg,bp = bgs:match("(.-)_(.+)")
-		bg,bp=tonumber(bg),tonumber(bp)
-		if bp ~= nil then
-			gpu.setBackground(bp,true)
-		else
-			gpu.setBackground(bg)
-		end
-		for fgs in pairs(screen.cfg) do
-			local fg,fp = fgs:match("(.-)_(.+)")
-			fg,fp=tonumber(fg),tonumber(fp)
-			if fp ~= nil then
-				gpu.setForeground(fp,true)
-			else
-				gpu.setForeground(fg)
-			end
-			for y = 1,screen.height do
-				local str = ""
-				for x = 1,screen.width do
-					if screen[y][x][2] == fg and screen[y][x][3] == bg then
-						str = str .. screen[y][x][1]
-					elseif #str > 0 then
-						gpu.set(x-unicode.len(str),y,str)
-						str = ""
-					end
-				end
-				if #str > 0 then
-					gpu.set(screen.width-unicode.len(str)+1,y,str)
-				end
-			end
-		end
-	end
+	term.setCursor(1,screen.height)
 	gpu.setBackground(table.unpack(screen.bg))
 	gpu.setForeground(table.unpack(screen.fg))
-	term.setCursor(table.unpack(screen.cursor))
+	print("Restoring screen ...")
+	for i = 0,15 do
+		gpu.setPaletteColor(i,screen.palette[i])
+	end
 end
 
 local function loadConfig()
