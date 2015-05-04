@@ -1417,13 +1417,14 @@ local function main()
 				return {}
 			end
 			local nprefix = (block.parent.support.PREFIX or default_support.PREFIX):match("%)(.*)")
+			local line, extra = line:sub(1,pos-1), line:sub(pos)
 			local base, word = (" " .. line):match("(.*%s)(.*)")
 			base,word = base:sub(2),word:lower()
 			local list = {}
 			for i = 1,#block.names do
 				local name = block.names[i]:gsub("^[" .. nprefix .. "]+","")
 				if name:sub(1,#word):lower() == word then
-					list[#list+1] = base .. name .. (base == "" and ": " or "")
+					list[#list+1] = base .. name .. (base == "" and ": " or "") .. extra
 				end
 			end
 			table.sort(list,function(a,b) return a:lower() < b:lower() end)
