@@ -807,8 +807,9 @@ local function handleCommand(block, prefix, command, args, message)
 			end
 		end
 	elseif command == "MODE" then
+		local cblock = helper.findChannel(block,args[1])
 		if #args == 2 then
-			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
+			helper.addTextToBlock(cblock or block,"*",(cblock and "" or "[" .. args[1] .. "] ") .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
 		else
 			local setmode = {}
 			local cumode = "+"
@@ -840,15 +841,15 @@ local function handleCommand(block, prefix, command, args, message)
 					"set " .. setmode[c][1] .. mode .. " on"
 				if last ~= key then
 					if last then
-						helper.addTextToBlock(block,"*",ctxt)
+						helper.addTextToBlock(cblock or block,"*",ctxt)
 					end
-					ctxt = "[" .. args[1] .. "] " .. name(prefix) .. " " .. key
+					ctxt = (cblock and "" or "[" .. args[1] .. "] ") .. name(prefix) .. " " .. key
 					last = key
 				end
 				ctxt = ctxt .. " " .. users[c]
 			end
 			if #ctxt > 0 then
-				helper.addTextToBlock(block,"*",ctxt)
+				helper.addTextToBlock(cblock or block,"*",ctxt)
 			end
 		end
 	elseif command == "QUIT" then
