@@ -282,11 +282,9 @@ local function drawList(width,height)
 	setForeground(theme.tree.active.color)
 	setBackground(theme.window.color)
 	gpu.set(screen.width,pos,scroll_chars[ipos])
-	if pos+1 <= height then
-		setBackground(theme.tree.active.color)
-		setForeground(theme.window.color)
-		gpu.set(screen.width,pos+1,scroll_chars[ipos])
-	end
+	setBackground(theme.tree.active.color)
+	setForeground(theme.window.color)
+	gpu.set(screen.width,pos+1,scroll_chars[ipos])
 end
 
 local function colorChunker(ostr,kill)
@@ -449,6 +447,13 @@ local customGPU = {
 				copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+self.x-1,y+self.y-1,w,h,tx,ty) end end,
 				fill = function(x,y,w,h,c) return gpu.fill(x+self.x-1,y+self.y-1,w,h,c) end,
 			}
+			setmetatable(self.gpu,{
+				__index = function(_,k)
+					if gpu[k] ~= nil then
+						return gpu[k]
+					end
+				end
+			})
 		end
 	end
 }
@@ -1394,6 +1399,8 @@ local function main()
 				until not ok
 			end
 		end
+	end, math.huge)
+	persist.timer = event.timer(0.05, function()
 		if dirty.blocks or dirty.title or dirty.window or dirty.nicks then
 			redraw()
 		end
