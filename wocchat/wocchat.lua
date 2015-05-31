@@ -1040,7 +1040,7 @@ local function handleCommand(block, prefix, command, args, message)
 	elseif command == replies.RPL_TOPIC then
 		local cblock = helper.findChannel(block,args[2])
 		cblock.title = message
-		helper.addTextToBlock(cblock,"*","Topic for " .. args[1] .. ": " .. message,theme.actions.title.color)
+		helper.addTextToBlock(cblock,"*","Topic for " .. args[2] .. ": " .. message,theme.actions.title.color)
 		if blocks[blocks.active] == cblock then
 			dirty.title = true
 		end
