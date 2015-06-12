@@ -11,9 +11,9 @@ local function uz(a)
 end
 
 function unicode.find(str, pattern, init, plain)
-    checkArg(1, str, "string")
-    checkArg(2, pattern, "string")
-    checkArg(3, init, "number", "nil")
+	checkArg(1, str, "string")
+	checkArg(2, pattern, "string")
+	checkArg(3, init, "number", "nil")
 	if init then
 		if init < 0 then
 			init = -#unicode.sub(str,init)
@@ -33,11 +33,11 @@ function unicode.find(str, pattern, init, plain)
 end
 
 function unicode.byte(str, i, j)
-    checkArg(1, str, "string")
+	checkArg(1, str, "string")
 	if i == nil then i = 1 end
 	if j == nil then j = i end
-    checkArg(2, i, "number")
-    checkArg(3, j, "number")
+	checkArg(2, i, "number")
+	checkArg(3, j, "number")
 	local part = unicode.sub(str,i,j)
 	local results = {}
 	for char in part:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
