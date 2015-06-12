@@ -282,11 +282,9 @@ local function drawList(width,height)
 	setForeground(theme.tree.active.color)
 	setBackground(theme.window.color)
 	gpu.set(screen.width,pos,scroll_chars[ipos])
-	if pos+1 <= height then
-		setBackground(theme.tree.active.color)
-		setForeground(theme.window.color)
-		gpu.set(screen.width,pos+1,scroll_chars[ipos])
-	end
+	setBackground(theme.tree.active.color)
+	setForeground(theme.window.color)
+	gpu.set(screen.width,pos+1,scroll_chars[ipos])
 end
 
 local function colorChunker(ostr,kill)
@@ -449,6 +447,13 @@ local customGPU = {
 				copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+self.x-1,y+self.y-1,w,h,tx,ty) end end,
 				fill = function(x,y,w,h,c) return gpu.fill(x+self.x-1,y+self.y-1,w,h,c) end,
 			}
+			setmetatable(self.gpu,{
+				__index = function(_,k)
+					if gpu[k] ~= nil then
+						return gpu[k]
+					end
+				end
+			})
 		end
 	end
 }
@@ -802,8 +807,9 @@ local function handleCommand(block, prefix, command, args, message)
 			end
 		end
 	elseif command == "MODE" then
+		local cblock = helper.findChannel(block,args[1])
 		if #args == 2 then
-			helper.addTextToBlock(block,"*","[" .. args[1] .. "] " .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
+			helper.addTextToBlock(cblock or block,"*",(cblock and "" or "[" .. args[1] .. "] ") .. name(prefix) .. " set mode".. ( #args[2] > 2 and "s" or "" ) .. " " .. tostring(args[2] or message) .. ".")
 		else
 			local setmode = {}
 			local cumode = "+"
@@ -835,15 +841,15 @@ local function handleCommand(block, prefix, command, args, message)
 					"set " .. setmode[c][1] .. mode .. " on"
 				if last ~= key then
 					if last then
-						helper.addTextToBlock(block,"*",ctxt)
+						helper.addTextToBlock(cblock or block,"*",ctxt)
 					end
-					ctxt = "[" .. args[1] .. "] " .. name(prefix) .. " " .. key
+					ctxt = (cblock and "" or "[" .. args[1] .. "] ") .. name(prefix) .. " " .. key
 					last = key
 				end
 				ctxt = ctxt .. " " .. users[c]
 			end
 			if #ctxt > 0 then
-				helper.addTextToBlock(block,"*",ctxt)
+				helper.addTextToBlock(cblock or block,"*",ctxt)
 			end
 		end
 	elseif command == "QUIT" then
@@ -1035,7 +1041,7 @@ local function handleCommand(block, prefix, command, args, message)
 	elseif command == replies.RPL_TOPIC then
 		local cblock = helper.findChannel(block,args[2])
 		cblock.title = message
-		helper.addTextToBlock(cblock,"*","Topic for " .. args[1] .. ": " .. message,theme.actions.title.color)
+		helper.addTextToBlock(cblock,"*","Topic for " .. args[2] .. ": " .. message,theme.actions.title.color)
 		if blocks[blocks.active] == cblock then
 			dirty.title = true
 		end
@@ -1394,6 +1400,8 @@ local function main()
 				until not ok
 			end
 		end
+	end, math.huge)
+	persist.timer = event.timer(0.05, function()
 		if dirty.blocks or dirty.title or dirty.window or dirty.nicks then
 			redraw()
 		end
