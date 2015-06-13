@@ -2,7 +2,6 @@
 nano clone based off GNU nano for OpenComputers
 by Gamax92
 --]]
-
 local component = require("component")
 local kbd = require("keyboard")
 local keys = kbd.keys
@@ -14,6 +13,9 @@ local unicode = require("unicode")
 
 local nanoVERSION = "1.0.0"
 
+local function printf(...) print(string.format(...)) end
+local function eprintf(...) io.stderr:write(string.format(...) .. "\n") end
+
 -- TODO: Replace with more gnuopt style parser
 local args, opts = shell.parse(...)
 
@@ -24,9 +26,59 @@ local options = {
 	bgcolor = 0x000000,
 	tabsize = 8,
 }
--- TODO: Parse arguments
+local flags={"autoindent","backup","backwards","brighttext","casesensitive","const","cut","morespace","mouse","multibuffer","noconvert","nohelp","nonewlines","nowrap","quiet","quickblank","patterns","smarthome","smooth","softwrap","tabstospaces","tempfile","undo","view"}
+for i = 1,#flags do
+	options[flags[i]] = false
+end
+flags = nil
 
--- TODO: Parse nanorc
+local eb = "Error in %s on line %d: "
+local function parseRC(filename)
+	local problem = false
+	local file, err = io.open(filename,"rb")
+	if not file then
+		problem = true; printf("Error reading %s: %s", filename, err)
+	else
+		local i = 1
+		for line in file:lines() do
+			local cmd = {}
+			for part in line:gmatch("%S+") do
+				cmd[#cmd+1] = part
+			end
+			if cmd[1] == "set" or cmd[1] == "unset" then
+				if #cmd < 2 then
+					problem = true; printf(eb .. "Missing flag", filename, i)
+				elseif options[cmd[2]] ~= nil then
+					if type(options[cmd[2]]) == "boolean" then
+						options[cmd[2]] = cmd[1] == "set"
+					elseif type(options[cmd[2]]) == "number" then
+						if tonumber(cmd[3]) == nil then
+							problem = true; printf(eb.."Parameter \"%s\" is invalid", filename, i, cmd[3])
+						else
+							options[cmd[2]] = tonumber(cmd[3])
+						end
+					end
+				else
+					problem = true; printf(eb.."Unknown flag \"%s\"", filename, i, cmd[2])
+				end
+			else
+				problem = true; printf(eb.."Command \"%s\" not understood", filename, i, cmd[1])
+			end
+			i = i + 1
+		end
+	end
+	if problem then
+		print("Press Enter to continue starting nano.")
+		while true do
+			local name,_,_,code = event.pull()
+			if name == "key_down" and code == keys.enter then break end
+		end
+	end
+end
+if fs.exists("/etc/nanorc") then
+	parseRC("/etc/nanorc")
+end
+-- TODO: Parse arguments
 
 local buffers = {}
 local gpu = component.gpu
@@ -115,6 +167,7 @@ local function createNewBuffer()
 		lines = {
 		},
 		x = 1,
+		tx = 1,
 		y = 1,
 		startLine = 1,
 	}
@@ -161,8 +214,14 @@ local function updateActiveLine()
 	-- TODO: Redraw with respect to the cursor
 	term.setCursorBlink(false)
 	drawLine(line,buffer.y-buffer.startLine+linesY)
-	term.setCursor(map[math.min(buffer.x,unicode.len(line)+1)],buffer.y-buffer.startLine+linesY)
+	term.setCursor(map[math.min(buffer.x,#map)],buffer.y-buffer.startLine+linesY)
 	for i=1,2 do term.setCursorBlink(true)end
+end
+
+local function updateTX()
+	local buffer = buffers[buffers.cur]
+	local _,map = formatLine(buffer.lines[buffer.y],true)
+	buffer.tx = map[math.min(buffer.x,#map)]
 end
 
 local function scrollBuffer()
@@ -238,6 +297,12 @@ while running do
 		local char, code = e[3], e[4]
 		local clul = unicode.len(buffer.lines[buffer.y])
         if kbd.isAltDown() or kbd.isControlDown() then
+			local ctrl = kbd.isControlDown()
+			local alt = kbd.isAltDown()
+			if code == keys.lcontrol or code == keys.rcontrol or code == keys.lmenu or code == keys.rmenu then
+			else
+				setStatusBar("Unknown Command")
+			end
 		elseif char == 0 or (kbd.isControl(char) and char ~= 9) then
 			if code == keys.f1 then
 				running = false
@@ -249,6 +314,7 @@ while running do
 						buffer.x = unicode.len(buffer.lines[buffer.y])+1
 						scrollBuffer()
 					end
+					updateTX()
 					updateActiveLine()
 				end
 			elseif code == keys.right then
@@ -259,30 +325,41 @@ while running do
 						buffer.x = 1
 						scrollBuffer()
 					end
+					updateTX()
 					updateActiveLine()
 				end
 			elseif code == keys.up then
-				-- TODO: Match up cursor X positions
 				if buffer.y > 1 then
 					buffer.y = buffer.y - 1
+					local _,map = formatLine(buffer.lines[buffer.y],true)
+					for i = 1,#map do
+						if map[i] > buffer.tx then break end
+						buffer.x = i
+					end
 					scrollBuffer()
 					updateActiveLine()
 				end
 			elseif code == keys.down then
-				-- TODO: Match up cursor X positions
 				if buffer.y < #buffer.lines then
 					buffer.y = buffer.y + 1
+					local _,map = formatLine(buffer.lines[buffer.y],true)
+					for i = 1,#map do
+						if map[i] > buffer.tx then break end
+						buffer.x = i
+					end
 					scrollBuffer()
 					updateActiveLine()
 				end
 			elseif code == keys.home then
 				if buffer.x > 1 then
 					buffer.x = 1
+					updateTX()
 					updateActiveLine()
 				end
 			elseif code == keys["end"] then
 				if buffer.x < clul+1 then
 					buffer.x = clul+1
+					updateTX()
 					updateActiveLine()
 				end
 			elseif code == keys.back then
@@ -303,6 +380,7 @@ while running do
 					buffer.x = buffer.x - 1
 					updateActiveLine()
 				end
+				updateTX()
 			elseif code == keys.delete then
 				if buffer.x >= clul+1 then
 					setModified(buffer)
@@ -324,6 +402,7 @@ while running do
 				table.insert(buffer.lines,buffer.y+1,unicode.sub(line,buffer.x))
 				buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1)
 				buffer.x = 1
+				buffer.tx = 1
 				buffer.y = buffer.y + 1
 				-- TODO: Don't redraw everything
 				switchBuffers(buffers.cur)
@@ -333,6 +412,7 @@ while running do
 			local line = buffer.lines[buffer.y]
 			buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1) .. unicode.char(char) .. unicode.sub(line,buffer.x)
 			buffer.x = buffer.x + 1
+			updateTX()
 			updateActiveLine()
 		end
 	end
