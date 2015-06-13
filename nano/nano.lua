@@ -31,6 +31,86 @@ for i = 1,#flags do
 	options[flags[i]] = false
 end
 flags = nil
+-- Default bindings
+-- TODO: Bindings for things other than main
+local bind = {
+	main = {
+		{"help","^G","F1"},
+		{"exit","^X","F2"},
+		{"writeout","^O","F3"},
+		{"insert","^R","F5","insert"},
+		{"whereis","^W","F6"},
+		{"replace","^\\","M-R","F14"},
+		{"cut","^K","F9"},
+		{"uncut","^U","F10"},
+		{"justify","^J","F4"},
+		{"speller","^T","F12"},
+		{"curpos","^C","F11"},
+		{"gotoline","^_","M-G","F13"},
+		{"prevpage","^Y","F7","pageUp"},
+		{"nextpage","^V","F8","pageDown"},
+		{"firstline","M-\\","M-|"},
+		{"lastline","M-/","M-?"},
+		{"searchagain","M-W","F16"},
+		{"findbracket","M-]"},
+		{"mark","^^","M-A","F15"},
+		{"copytext","M-^","M-6"},
+		{"indent","M-}"},
+		{"unindent","M-{"},
+		{"undo","M-U"},
+		{"redo","M-E"},
+		{"left","^B","left"},
+		{"right","^F","right"},
+		{"prevword","M-Space"},
+		{"nextword","^Space"},
+		{"home","^A","home"},
+		{"end","^E","end"},
+		{"prevline","^P","up"},
+		{"nextline","^N","down"},
+		{"beginpara","M-(","M-9"},
+		{"endpara","M-)","M-0"},
+		{"scrollup","M--","M-_"},
+		{"scrolldown","M-+","M-="},
+		{"prevbuf","M-<","M-,"},
+		{"nextbuf","M->","M-."},
+		{"verbatim","M-V"},
+		{"tab","^I"},
+		{"enter","^M","enter"},
+		{"delete","^D","delete"},
+		{"backspace","^H","back"},
+		{"cutrestoffile","M-T"},
+		{"fulljustify","M-J"},
+		{"wordcount","M-D"},
+		{"refresh","^L"},
+		{"suspend","^Z"},
+		{"nohelp","M-X"},
+		{"constupdate","M-C"},
+		{"morespace","M-O"},
+		{"smoothscroll","M-S"},
+		{"softwrap","M-$"},
+		{"whitespacedisplay","M-P"},
+		{"nosyntax","M-Y"},
+		{"smarthome","M-H"},
+		{"autoindent","M-I"},
+		{"cuttoend","M-K"},
+		{"nowrap","M-L"},
+		{"tabstospaces","M-Q"},
+		{"backupfile","M-B"},
+		{"multibuffer","M-F"},
+		{"mouse","M-M"},
+		{"noconvert","M-N"},
+		{"suspendenable","M-Z"},
+	}
+}
+for k,v in pairs(bind) do
+	for i = 1,#v do
+		local b = v[i]
+		for j = 2,#b do
+			v[unicode.upper(b[j])]=b[1]
+		end
+		v[i] = nil
+	end
+end
 
 local eb = "Error in %s on line %d: "
 local function parseRC(filename)
@@ -61,6 +141,8 @@ local function parseRC(filename)
 				else
 					problem = true; printf(eb.."Unknown flag \"%s\"", filename, i, cmd[2])
 				end
+			elseif cmd[1] == "bind" or cmd[1] == "unbind" then
+				-- TODO: These commands
 			else
 				problem = true; printf(eb.."Command \"%s\" not understood", filename, i, cmd[1])
 			end
@@ -80,7 +162,7 @@ if fs.exists("/etc/nanorc") then
 end
 -- TODO: Parse arguments
 
-local buffers = {}
+local buffers, buffer = {}
 local gpu = component.gpu
 gpu.setForeground(options.fgcolor)
 gpu.setBackground(options.bgcolor)
@@ -88,6 +170,8 @@ local gpuW, gpuH = gpu.getResolution()
 gpu.fill(1,1,gpuW,gpuH," ")
 term.setCursorBlink(true)
 
+-- TODO: more modes
+local mode = "main"
 -- Calculate positions for screen elements
 -- TODO: Actually calculate
 local linesY = 3
@@ -208,7 +292,6 @@ local function drawLine(line,y)
 end
 
 local function updateActiveLine()
-	local buffer = buffers[buffers.cur]
 	local line = buffer.lines[buffer.y]
 	local fline,map = formatLine(line,true)
 	-- TODO: Redraw with respect to the cursor
@@ -219,13 +302,12 @@ local function updateActiveLine()
 end
 
 local function updateTX()
-	local buffer = buffers[buffers.cur]
 	local _,map = formatLine(buffer.lines[buffer.y],true)
 	buffer.tx = map[math.min(buffer.x,#map)]
 end
 
 local function scrollBuffer()
-	local buffer, amt = buffers[buffers.cur]
+	local amt
 	local startLine = buffer.startLine
 	if buffer.y-startLine < 0 then
 		amt = buffer.y-startLine
@@ -252,7 +334,7 @@ end
 
 local function switchBuffers(index)
 	buffers.cur = index
-	local buffer = buffers[index]
+	buffer = buffers[index]
 	setTitleBar(buffer)
 	gpu.fill(1,linesY,gpuW,linesH," ")
 	local startLine, amt = buffer.startLine
@@ -269,6 +351,118 @@ local function switchBuffers(index)
 		drawLine(buffer.lines[i],i-startLine+linesY)
 	end
 	updateActiveLine()
+end
+
+local function clul() return unicode.len(buffer.lines[buffer.y]) end
+local binding = {}
+function binding.left()
+	if buffer.x > 1 or buffer.y > 1 then
+		buffer.x = buffer.x - 1
+		if buffer.x < 1 then
+			buffer.y = buffer.y - 1
+			buffer.x = unicode.len(buffer.lines[buffer.y])+1
+			scrollBuffer()
+		end
+		updateTX()
+		updateActiveLine()
+	end
+end
+function binding.right()
+	if buffer.x < clul()+1 or buffer.y < #buffer.lines then
+		buffer.x = buffer.x + 1
+		if buffer.x > clul()+1 then
+			buffer.y = buffer.y + 1
+			buffer.x = 1
+			scrollBuffer()
+		end
+		updateTX()
+		updateActiveLine()
+	end
+end
+function binding.prevline()
+	if buffer.y > 1 then
+		buffer.y = buffer.y - 1
+		local _,map = formatLine(buffer.lines[buffer.y],true)
+		for i = 1,#map do
+			if map[i] > buffer.tx then break end
+			buffer.x = i
+		end
+		scrollBuffer()
+		updateActiveLine()
+	end
+end
+function binding.nextline()
+	if buffer.y < #buffer.lines then
+		buffer.y = buffer.y + 1
+		local _,map = formatLine(buffer.lines[buffer.y],true)
+		for i = 1,#map do
+			if map[i] > buffer.tx then break end
+			buffer.x = i
+		end
+		scrollBuffer()
+		updateActiveLine()
+	end
+end
+function binding.home()
+	if buffer.x > 1 then
+		buffer.x = 1
+		updateTX()
+		updateActiveLine()
+	end
+end
+binding["end"] = function()
+	if buffer.x < clul()+1 then
+		buffer.x = clul()+1
+		updateTX()
+		updateActiveLine()
+	end
+end
+function binding.backspace()
+	if buffer.x == 1 then
+		if buffer.y > 1 then
+			setModified(buffer)
+			buffer.x = unicode.len(buffer.lines[buffer.y-1])+1
+			buffer.lines[buffer.y-1] = buffer.lines[buffer.y-1] .. buffer.lines[buffer.y]
+			table.remove(buffer.lines,buffer.y)
+			buffer.y = buffer.y - 1
+			-- TODO: Don't redraw everything
+			switchBuffers(buffers.cur)
+		end
+	else
+		setModified(buffer)
+		local line = buffer.lines[buffer.y]
+		buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-2) .. unicode.sub(line,buffer.x)
+		buffer.x = buffer.x - 1
+		updateActiveLine()
+	end
+	updateTX()
+end
+function binding.delete()
+	if buffer.x >= clul()+1 then
+		setModified(buffer)
+		if buffer.y < #buffer.lines then
+			buffer.lines[buffer.y] = buffer.lines[buffer.y] .. buffer.lines[buffer.y+1]
+			table.remove(buffer.lines,buffer.y+1)
+			-- TODO: Don't redraw everything
+			switchBuffers(buffers.cur)
+		end
+	else
+		setModified(buffer)
+		local line = buffer.lines[buffer.y]
+		buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1) .. unicode.sub(line,buffer.x+1)
+		updateActiveLine()
+	end
+end
+function binding.enter()
+	setModified(buffer)
+	local line = buffer.lines[buffer.y]
+	table.insert(buffer.lines,buffer.y+1,unicode.sub(line,buffer.x))
+	buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1)
+	buffer.x = 1
+	buffer.tx = 1
+	buffer.y = buffer.y + 1
+	-- TODO: Don't redraw everything
+	switchBuffers(buffers.cur)
 end
 
 -- TODO: Line and column arguments
@@ -291,122 +485,39 @@ switchBuffers(1)
 
 local running = true
 while running do
-	local buffer = buffers[buffers.cur]
 	local e = { event.pull() }
 	if e[1] == "key_down" then
 		local char, code = e[3], e[4]
-		local clul = unicode.len(buffer.lines[buffer.y])
-        if kbd.isAltDown() or kbd.isControlDown() then
-			local ctrl = kbd.isControlDown()
-			local alt = kbd.isAltDown()
-			if code == keys.lcontrol or code == keys.rcontrol or code == keys.lmenu or code == keys.rmenu then
+		local ctrl = kbd.isControlDown()
+		local alt = kbd.isAltDown()
+		local scp,sc = keys[code]:sub(1,1), keys[code]:sub(2)
+		local schar
+		if not kbd.isControl(char) and char ~= 32 then
+			schar = unicode.upper(unicode.char(char))
+		else
+			schar = unicode.upper(keys[code])
+		end
+		if ctrl then
+			-- TODO: This doesn't cover everything
+			if unicode.len(keys[code]) == 1 then
+				schar = unicode.upper(keys[code])
+			end
+		end
+		if ctrl then
+			schar = "^" .. schar
+		elseif alt then
+			schat = "M-" .. schar
+		end
+		if (scp == "l" or scp == "r") and (sc == "control" or sc == "menu" or sc == "shift") then
+		elseif bind[mode][schar] ~= nil then
+			local cmd = bind[mode][schar]
+			if binding[cmd] ~= nil then
+				binding[cmd]()
 			else
-				setStatusBar("Unknown Command")
+				setStatusBar("Binding \"" .. cmd .. "\" Unimplemented")
 			end
-		elseif char == 0 or (kbd.isControl(char) and char ~= 9) then
-			if code == keys.f1 then
-				running = false
-			elseif code == keys.left then
-				if buffer.x > 1 or buffer.y > 1 then
-					buffer.x = buffer.x - 1
-					if buffer.x < 1 then
-						buffer.y = buffer.y - 1
-						buffer.x = unicode.len(buffer.lines[buffer.y])+1
-						scrollBuffer()
-					end
-					updateTX()
-					updateActiveLine()
-				end
-			elseif code == keys.right then
-				if buffer.x < clul+1 or buffer.y < #buffer.lines then
-					buffer.x = buffer.x + 1
-					if buffer.x > clul+1 then
-						buffer.y = buffer.y + 1
-						buffer.x = 1
-						scrollBuffer()
-					end
-					updateTX()
-					updateActiveLine()
-				end
-			elseif code == keys.up then
-				if buffer.y > 1 then
-					buffer.y = buffer.y - 1
-					local _,map = formatLine(buffer.lines[buffer.y],true)
-					for i = 1,#map do
-						if map[i] > buffer.tx then break end
-						buffer.x = i
-					end
-					scrollBuffer()
-					updateActiveLine()
-				end
-			elseif code == keys.down then
-				if buffer.y < #buffer.lines then
-					buffer.y = buffer.y + 1
-					local _,map = formatLine(buffer.lines[buffer.y],true)
-					for i = 1,#map do
-						if map[i] > buffer.tx then break end
-						buffer.x = i
-					end
-					scrollBuffer()
-					updateActiveLine()
-				end
-			elseif code == keys.home then
-				if buffer.x > 1 then
-					buffer.x = 1
-					updateTX()
-					updateActiveLine()
-				end
-			elseif code == keys["end"] then
-				if buffer.x < clul+1 then
-					buffer.x = clul+1
-					updateTX()
-					updateActiveLine()
-				end
-			elseif code == keys.back then
-				if buffer.x == 1 then
-					if buffer.y > 1 then
-						setModified(buffer)
-						buffer.x = unicode.len(buffer.lines[buffer.y-1])+1
-						buffer.lines[buffer.y-1] = buffer.lines[buffer.y-1] .. buffer.lines[buffer.y]
-						table.remove(buffer.lines,buffer.y)
-						buffer.y = buffer.y - 1
-						-- TODO: Don't redraw everything
-						switchBuffers(buffers.cur)
-					end
-				else
-					setModified(buffer)
-					local line = buffer.lines[buffer.y]
-					buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-2) .. unicode.sub(line,buffer.x)
-					buffer.x = buffer.x - 1
-					updateActiveLine()
-				end
-				updateTX()
-			elseif code == keys.delete then
-				if buffer.x >= clul+1 then
-					setModified(buffer)
-					if buffer.y < #buffer.lines then
-						buffer.lines[buffer.y] = buffer.lines[buffer.y] .. buffer.lines[buffer.y+1]
-						table.remove(buffer.lines,buffer.y+1)
-						-- TODO: Don't redraw everything
-						switchBuffers(buffers.cur)
-					end
-				else
-					setModified(buffer)
-					local line = buffer.lines[buffer.y]
-					buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1) .. unicode.sub(line,buffer.x+1)
-					updateActiveLine()
-				end
-			elseif code == keys.enter then
-				setModified(buffer)
-				local line = buffer.lines[buffer.y]
-				table.insert(buffer.lines,buffer.y+1,unicode.sub(line,buffer.x))
-				buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1)
-				buffer.x = 1
-				buffer.tx = 1
-				buffer.y = buffer.y + 1
-				-- TODO: Don't redraw everything
-				switchBuffers(buffers.cur)
-			end
+		elseif ctrl or alt then
+			setStatusBar("Unknown Command")
 		else
 			setModified(buffer)
 			local line = buffer.lines[buffer.y]
