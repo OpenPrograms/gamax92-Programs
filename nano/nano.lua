@@ -16,6 +16,9 @@ local nanoVERSION = "1.0.0"
 
 local function printf(...) print(string.format(...)) end
 local function eprintf(...) io.stderr:write(string.format(...) .. "\n") end
+-- Fix keys.none
+keys["none"] = 0
+keys[0] = "none"
 
 -- TODO: Replace with more gnuopt style parser
 local args, opts = shell.parse(...)
@@ -31,6 +34,8 @@ local flags={"autoindent","backup","backwards","brighttext","casesensitive","con
 for i = 1,#flags do
 	options[flags[i]] = false
 end
+-- TODO: HACK, REMOVE WHEN HELP AREA IS IMPLEMENTED
+options.nohelp = true
 flags = nil
 -- Default bindings
 -- TODO: Bindings for things other than main
@@ -103,24 +108,29 @@ local bind = {
 		{"suspendenable","M-Z"},
 	}
 }
+local vfn = {} 
 for k,v in pairs(bind) do
 	for i = 1,#v do
 		local b = v[i]
 		for j = 2,#b do
 			v[unicode.upper(b[j])]=b[1]
 		end
+		vfn[b[1]]=true
 		v[i] = nil
 	end
 end
 
-local eb = "Error in %s on line %d: "
 local function parseRC(filename)
 	local problem = false
+	local i = 1
+	local function bad(msg, ...)
+		problem = true
+		printf("Error in %s on line %d: " .. msg, filename, i, ...)
+	end
 	local file, err = io.open(filename,"rb")
 	if not file then
 		problem = true; printf("Error reading %s: %s", filename, err)
 	else
-		local i = 1
 		for line in file:lines() do
 			local cmd = {}
 			for part in line:gmatch("%S+") do
@@ -128,24 +138,48 @@ local function parseRC(filename)
 			end
 			if cmd[1] == "set" or cmd[1] == "unset" then
 				if #cmd < 2 then
-					problem = true; printf(eb .. "Missing flag", filename, i)
+					bad("Missing flag")
 				elseif options[cmd[2]] ~= nil then
 					if type(options[cmd[2]]) == "boolean" then
 						options[cmd[2]] = cmd[1] == "set"
+					elseif cmd[1] == "unset" then
+						bad("Cannot unset option \"%s\"", cmd[2])
 					elseif type(options[cmd[2]]) == "number" then
 						if tonumber(cmd[3]) == nil then
-							problem = true; printf(eb.."Parameter \"%s\" is invalid", filename, i, cmd[3])
+							bad("Parameter \"%s\" is invalid", cmd[3])
 						else
 							options[cmd[2]] = tonumber(cmd[3])
 						end
 					end
 				else
-					problem = true; printf(eb.."Unknown flag \"%s\"", filename, i, cmd[2])
+					bad("Unknown flag \"%s\"", cmd[2])
 				end
 			elseif cmd[1] == "bind" or cmd[1] == "unbind" then
-				-- TODO: These commands
+				if cmd[2] == nil then
+					bad("Missing key name")
+				else
+					local first = unicode.upper(cmd[2]:sub(1,1))
+					local last = cmd[1] == "bind" and cmd[4] or cmd[3]
+					if first ~= "^" and first ~= "M" and first ~= "F" then
+						bad("Key name must begin with \"^\", \"M\", or \"F\"")
+					elseif cmd[1] == "bind" and cmd[3] == nil then
+						bad("Must specify a function to bind the key to")
+					elseif last == nil then
+						bad("Must specify a menu (or \"all\") in which to bind/unbind the key")
+					elseif cmd[1] == "bind" and not vfn[cmd[3]] then
+						bad("Cannot map name \"%s\" to a function", cmd[3])
+					elseif bind[last] == nil then
+						bad("Cannot map name \"%s\" to a menu", last)
+					else
+						if cmd[1] == "bind" then
+							bind[last][cmd[2]] = cmd[3]
+						elseif cmd[1] == "unbind" then
+							bind[last][cmd[2]] = nil
+						end
+					end
+				end
 			else
-				problem = true; printf(eb.."Command \"%s\" not understood", filename, i, cmd[1])
+				bad("Command \"%s\" not understood", cmd[1])
 			end
 			i = i + 1
 		end
@@ -174,10 +208,15 @@ term.setCursorBlink(true)
 -- TODO: more modes
 local mode = "main"
 -- Calculate positions for screen elements
--- TODO: Actually calculate
-local linesY = 3
-local linesH = gpuH - 3 -- TODO: Help area
+local linesY = (options.morespace and 2 or 3)
+local linesH = gpuH - linesY
 local statusbarY = gpuH
+if not options.nohelp then
+	linesH = linesH - 2
+	statusbarY = statusbarY - 2
+end
+-- TODO: Help lines
+
 
 local utf8char = "[%z\1-\127\194-\244][\128-\191]*"
 local function formatLine(text,map)
@@ -234,7 +273,9 @@ local function setModified(buffer,mod)
 	end
 end
 
+local timeout = math.huge
 local function setStatusBar(text)
+	timeout = 0
 	text = "[ " .. text .. " ]"
 	gpu.fill(1,statusbarY,gpuW,1," ")
 	gpu.setForeground(options.bgcolor)
@@ -292,13 +333,26 @@ local function drawLine(line,y)
 	gpu.set(1,y,fline)
 end
 
-local function updateActiveLine()
+local function updateActiveLine(simple)
 	local line = buffer.lines[buffer.y]
-	local fline,map = formatLine(line,true)
-	-- TODO: Redraw with respect to the cursor
 	term.setCursorBlink(false)
+	if not simple then
+		local fline,map = formatLine(line,true)
+		-- TODO: This is not nano style line clamping, plus it messes up when tabs have things behind them
+		local xwant = map[math.min(buffer.x,#map)]
+		local gwant = math.floor(gpuW*3/4)
+		if unicode.wlen(fline) >= gpuW and xwant >= gwant then
+			for i = 2,#map do
+				if xwant-map[i]+1 < gwant then
+					line = unicode.sub(line,i)
+					xwant = xwant-map[i]+1
+					break
+				end
+			end
+		end
+		term.setCursor(xwant,buffer.y-buffer.startLine+linesY)
+	end
 	drawLine(line,buffer.y-buffer.startLine+linesY)
-	term.setCursor(map[math.min(buffer.x,#map)],buffer.y-buffer.startLine+linesY)
 	for i=1,2 do term.setCursorBlink(true)end
 end
 
@@ -335,6 +389,7 @@ end
 
 local function redraw()
 	setTitleBar(buffer)
+	-- TODO: Only clear the area lacking lines
 	gpu.fill(1,linesY,gpuW,linesH," ")
 	local startLine, amt = buffer.startLine
 	if buffer.y-startLine < 0 then
@@ -462,6 +517,7 @@ function binding.left()
 	if buffer.x > 1 or buffer.y > 1 then
 		buffer.x = buffer.x - 1
 		if buffer.x < 1 then
+			updateActiveLine(true)
 			buffer.y = buffer.y - 1
 			buffer.x = unicode.len(buffer.lines[buffer.y])+1
 			scrollBuffer()
@@ -474,6 +530,7 @@ function binding.right()
 	if buffer.x < clul()+1 or buffer.y < #buffer.lines then
 		buffer.x = buffer.x + 1
 		if buffer.x > clul()+1 then
+			updateActiveLine(true)
 			buffer.y = buffer.y + 1
 			buffer.x = 1
 			scrollBuffer()
@@ -484,6 +541,7 @@ function binding.right()
 end
 function binding.prevline()
 	if buffer.y > 1 then
+		updateActiveLine(true)
 		buffer.y = buffer.y - 1
 		local _,map = formatLine(buffer.lines[buffer.y],true)
 		for i = 1,#map do
@@ -496,6 +554,7 @@ function binding.prevline()
 end
 function binding.nextline()
 	if buffer.y < #buffer.lines then
+		updateActiveLine(true)
 		buffer.y = buffer.y + 1
 		local _,map = formatLine(buffer.lines[buffer.y],true)
 		for i = 1,#map do
@@ -504,6 +563,32 @@ function binding.nextline()
 		end
 		scrollBuffer()
 		updateActiveLine()
+	end
+end
+function binding.prevpage()
+	if buffer.y > 1 then
+		local diff = math.max(buffer.y - linesH, 1) - buffer.y
+		buffer.y = buffer.y + diff
+		buffer.startLine = math.max(buffer.startLine + diff, 1)
+		local _,map = formatLine(buffer.lines[buffer.y],true)
+		for i = 1,#map do
+			if map[i] > buffer.tx then break end
+			buffer.x = i
+		end
+		redraw()
+	end
+end
+function binding.nextpage()
+	if buffer.y < #buffer.lines then
+		local diff = math.min(buffer.y + linesH, #buffer.lines) - buffer.y
+		buffer.y = buffer.y + diff
+		buffer.startLine = math.min(buffer.startLine + diff, #buffer.lines-linesH+1)
+		local _,map = formatLine(buffer.lines[buffer.y],true)
+		for i = 1,#map do
+			if map[i] > buffer.tx then break end
+			buffer.x = i
+		end
+		redraw()
 	end
 end
 function binding.home()
@@ -575,6 +660,20 @@ function binding.nextbuf()
 	buffers.cur = (buffers.cur%#buffers)+1
 	switchBuffers(buffers.cur)
 end
+function binding.curpos()
+	-- TODO: Character count
+	local la,lb = buffer.y,#buffer.lines
+	local oa,ob = buffer.x,#buffer.lines[buffer.y]+1
+	local cb = 0
+	for i = 1,buffer.y-1 do
+		cb = cb + #buffer.lines[i]+1
+	end
+	local ca = cb + buffer.x
+	for i = buffer.y,#buffer.lines do
+		cb = cb + #buffer.lines[i]+1
+	end
+	setStatusBar(string.format("line %d/%d (%d%%), col %d/%d (%d%%), char %d/%d (%d%%)",la,lb,la/lb*100+0.5, oa,ob,oa/ob*100+0.5, ca,cb,ca/cb*100+0.5))
+end
 
 -- TODO: Line and column arguments
 -- Load files
@@ -628,7 +727,11 @@ while running do
 			end
 		elseif ctrl or alt then
 			setStatusBar("Unknown Command")
-		else
+		elseif not kbd.isControl(char) or char == 9 then
+			timeout = timeout + 1
+			if timeout >= (options.quickblank and 1 or 25) then
+				gpu.fill(1,statusbarY,gpuW,1," ")
+			end
 			setModified(buffer)
 			local line = buffer.lines[buffer.y]
 			buffer.lines[buffer.y] = unicode.sub(line,1,buffer.x-1) .. unicode.char(char) .. unicode.sub(line,buffer.x)
@@ -641,3 +744,7 @@ end
 
 term.clear()
 term.setCursorBlink(false)
+
+-- Unfix keys.none
+keys["none"] = nil
+keys[0] = nil
