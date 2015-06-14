@@ -567,6 +567,14 @@ function binding.enter()
 	-- TODO: Don't redraw everything
 	redraw()
 end
+function binding.prevbuf()
+	buffers.cur = ((buffers.cur-2)%#buffers)+1
+	switchBuffers(buffers.cur)
+end
+function binding.nextbuf()
+	buffers.cur = (buffers.cur%#buffers)+1
+	switchBuffers(buffers.cur)
+end
 
 -- TODO: Line and column arguments
 -- Load files
