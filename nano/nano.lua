@@ -3,6 +3,7 @@ nano clone based off GNU nano for OpenComputers
 by Gamax92
 --]]
 local component = require("component")
+local computer = require("computer")
 local kbd = require("keyboard")
 local keys = kbd.keys
 local fs = require("filesystem")
@@ -332,9 +333,7 @@ local function scrollBuffer()
 	term.setCursorBlink(true)
 end
 
-local function switchBuffers(index)
-	buffers.cur = index
-	buffer = buffers[index]
+local function redraw()
 	setTitleBar(buffer)
 	gpu.fill(1,linesY,gpuW,linesH," ")
 	local startLine, amt = buffer.startLine
@@ -353,8 +352,112 @@ local function switchBuffers(index)
 	updateActiveLine()
 end
 
+local function switchBuffers(index)
+	buffer = buffers[index]
+	if buffers.cur ~= nil then
+		local name = "New Buffer"
+		if buffer.filename ~= nil then
+			name = buffer.filename:match(".*/(.+)")
+		end
+		setStatusBar("Switched to " .. name)
+	end
+	buffers.cur = index
+	redraw()
+end
+
+local function statusPrompt(text)
+	gpu.fill(1,statusbarY,gpuW,1," ")
+	gpu.set(1,statusbarY,text)
+	term.setCursor(unicode.wlen(text)+1,statusbarY)
+end
+
+local function resetColor()
+	gpu.setForeground(options.fgcolor)
+	gpu.setBackground(options.bgcolor)
+end
+
+local running = true
 local function clul() return unicode.len(buffer.lines[buffer.y]) end
 local binding = {}
+function binding.exit()
+	-- TODO: Get a MYESNO mode
+	if buffer.modified then
+		gpu.setForeground(options.bgcolor)
+		gpu.setBackground(options.fgcolor)
+		statusPrompt("Save modified buffer (ANSWERING \"No\" WILL DESTROY CHANGES) ? ")
+		while true do
+			local e,_,c = event.pull()
+			if e == "key_down" then
+				c = unicode.lower(unicode.char(c))
+				local ctrl = kbd.isControlDown()
+				if not ctrl and c == "y" then
+					-- TODO: Get a MWRITEFILE mode
+					-- TODO: Needs more options
+					local oldname = ""
+					if buffer.filename ~= nil then
+						oldname = buffer.filename:match(".*/(.+)")
+					end
+					local filename = oldname
+					::tryagain::
+					statusPrompt("File Name to Write: ")
+					-- TODO: HACK HACK HACK
+					computer.pushSignal("key_down",computer.address(),0,keys.up)
+					filename = term.read({filename},false)
+					if filename then
+						filename = filename:gsub("[\r\n]","")
+					end
+					if filename == "" or filename == nil then
+						resetColor()
+						setStatusBar("Cancelled")
+						return
+					end
+					if filename ~= oldname and fs.exists(shell.resolve(filename)) then
+						-- TODO: Again, MYESNO mode
+						statusPrompt("File exists, OVERWRITE ? ")
+						while true do
+							local e,_,c = event.pull()
+							c = unicode.lower(unicode.char(c))
+							if e == "key_down" then
+								local ctrl = kbd.isControlDown()
+								if not ctrl and c == "y" then
+									break
+								elseif (not ctrl and c == "n") or (ctrl and c == "\3") then
+									goto tryagain
+								end
+							end
+						end
+					end
+					local file, err = io.open(shell.resolve(filename),"wb")
+					if not file then
+						resetColor()
+						setStatusBar("Error writing " .. filename .. ": " .. err)
+						return
+					end
+					for i = 1,#buffer.lines do
+						file:write(buffer.lines[i] .. "\n")
+					end
+					file:close()
+					break
+				elseif not ctrl and c == "n" then
+					break
+				elseif ctrl and c == "\3" then
+					resetColor()
+					setStatusBar("Cancelled")
+					return
+				end
+			end
+		end
+	end
+	gpu.setForeground(options.fgcolor)
+	gpu.setBackground(options.bgcolor)
+	table.remove(buffers,buffers.cur)
+	buffers.cur = math.min(buffers.cur,#buffers)
+	if buffers.cur < 1 then
+		running = false
+	else
+		switchBuffers(buffers.cur)
+	end
+end
 function binding.left()
 	if buffer.x > 1 or buffer.y > 1 then
 		buffer.x = buffer.x - 1
@@ -426,7 +529,7 @@ function binding.backspace()
 			table.remove(buffer.lines,buffer.y)
 			buffer.y = buffer.y - 1
 			-- TODO: Don't redraw everything
-			switchBuffers(buffers.cur)
+			redraw()
 		end
 	else
 		setModified(buffer)
@@ -444,7 +547,7 @@ function binding.delete()
 			buffer.lines[buffer.y] = buffer.lines[buffer.y] .. buffer.lines[buffer.y+1]
 			table.remove(buffer.lines,buffer.y+1)
 			-- TODO: Don't redraw everything
-			switchBuffers(buffers.cur)
+			redraw()
 		end
 	else
 		setModified(buffer)
@@ -462,7 +565,7 @@ function binding.enter()
 	buffer.tx = 1
 	buffer.y = buffer.y + 1
 	-- TODO: Don't redraw everything
-	switchBuffers(buffers.cur)
+	redraw()
 end
 
 -- TODO: Line and column arguments
@@ -483,7 +586,6 @@ end
 -- Show the first file
 switchBuffers(1)
 
-local running = true
 while running do
 	local e = { event.pull() }
 	if e[1] == "key_down" then
@@ -506,7 +608,7 @@ while running do
 		if ctrl then
 			schar = "^" .. schar
 		elseif alt then
-			schat = "M-" .. schar
+			schar = "M-" .. schar
 		end
 		if (scp == "l" or scp == "r") and (sc == "control" or sc == "menu" or sc == "shift") then
 		elseif bind[mode][schar] ~= nil then
