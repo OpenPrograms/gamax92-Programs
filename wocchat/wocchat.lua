@@ -16,7 +16,7 @@ elseif not component.isAvailable("internet") then
 	return
 end
 
-local version = "v0.0.1"
+local version = "v0.0.2"
 
 local bit32 = require("bit32")
 local computer = require("computer")
@@ -154,6 +154,7 @@ local function saveConfig()
 	if not file then
 		return false, err
 	end
+	config.wocchat.version = version
 	local keys = {}
 	for k,v in pairs(config) do
 		keys[#keys+1] = k
@@ -615,7 +616,12 @@ function helper.joinServer(server)
 	local server,id = config.server[server],server
 	local nick = config.default.nick
 	local block = {type="server",name=server.name,id=id,text={},nick=nick,children={},support={}}
-	block.sock = internet.open(server.server)
+	local err
+	block.sock, err = internet.open(server.server)
+	if not block.sock then
+		helper.addText("","Failed connecting to " .. server.server .. ": " .. err,theme.actions.error.color)
+		return
+	end
 	block.sock:setTimeout(0.05)
 	block.sock:write(string.format("NICK %s\r\n", config.default.nick))
 	block.sock:write(string.format("USER %s 0 * :%s\r\n", config.default.user, config.default.realname))
@@ -920,10 +926,10 @@ local function handleCommand(block, prefix, command, args, message)
 		local ctcp = message:match("^\1(.-)\1$")
 		if ctcp then
 			local ctcp, param = ctcp:match("^(%S+) ?(.-)$")
+			ctcp = ctcp:upper()
 			if ctcp ~= "ACTION" then
 				helper.addTextToBlock(block,"*","[" .. name(prefix) .. "] CTCP " .. ctcp .. " " .. param)
 			end
-			ctcp = ctcp:upper()
 			if ctcp == "ACTION" then
 				local cblock = helper.findOrJoinChannel(block,channel)
 				helper.addTextToBlock(cblock,"*", name(prefix) .. " " .. param)
@@ -935,7 +941,7 @@ local function handleCommand(block, prefix, command, args, message)
 				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001PING " .. param .. "\001")
 			end
 		else
-			if string.find(message, nick) then
+			if message:find(nick, nil, true) then
 				computer.beep()
 			end
 			local cblock = helper.findOrJoinChannel(block,channel)
@@ -946,7 +952,7 @@ local function handleCommand(block, prefix, command, args, message)
 		if not (block.support.CHANTYPES or default_support.CHANTYPES):find(args[1]:sub(1,1),nil,true) then
 			channel = name(prefix)
 		end
-		if string.find(message, nick) then
+		if message:find(nick, nil, true) then
 			computer.beep()
 		end
 		if channel == prefix then
@@ -960,7 +966,7 @@ local function handleCommand(block, prefix, command, args, message)
 	elseif tonumber(command) and ignore[tonumber(command)] then
 	elseif command == replies.RPL_WELCOME then
 		helper.addTextToBlock(block,"*",message)
-		if config.server[block.id].channels ~= nil then
+		if config.server[block.id] ~= nil and config.server[block.id].channels ~= nil then
 			for channel in (config.server[block.id].channels .. ","):gmatch("(.-),") do
 				sock:write(string.format("JOIN %s\r\n", channel))
 			end
@@ -1114,6 +1120,17 @@ function commands.help(...)
 end
 function commands.server(...)
 	local args,opts = shell.parse(...)
+	if #args == 0 then
+		helper.addText("","Usage: /server address[:port]")
+	else
+		if not args[1]:find(":",nil,true) then
+			args[1] = args[1] .. ":6667"
+		end
+		config.server["_tmpserver"] = {name=args[1]:match("(.*):"),server=args[1]}
+		helper.joinServer("_tmpserver")
+		config.server["_tmpserver"] = nil
+		redraw()
+	end
 end
 function commands.connect(...)
 	local args,opts = shell.parse(...)
@@ -1249,6 +1266,19 @@ function commands.clear(...)
 	blocks[blocks.active].text = {}
 	dirty.window = true
 end
+function commands.nick(...)
+	local args = {...}
+	if #args == 0 then
+		helper.addText("","Usage: /nick nickname")
+	else
+		local sock = helper.getSocket()
+		if sock == nil then
+			helper.addText("","/nick cannot be performed on this block",theme.actions.error.color)
+		else
+			helper.write(sock, string.format("NICK %s", args[1]))
+		end
+	end
+end
 
 local function main()
 	if not fs.exists("/etc/wocchat.cfg") or options["dl-config"] then
@@ -1289,7 +1319,13 @@ local function main()
 		config.default.user = config.default.nick:lower()
 	end
 	if config.default.realname == nil then
-		config.default.realname = config.default.nick .. " [OpenComputers]"
+		config.default.realname = config.default.nick .. " [WocChat]"
+	end
+	-- Version upgrade assistant
+	if config.wocchat.version == nil then
+		if config.default.realname:sub(-15) == "[OpenComputers]" then
+			config.default.realname = config.default.realname:match("(.*)%[OpenComputers%]") .. "[WocChat]"
+		end
 	end
 	print("Saving screen ...")
 	saveScreen()
@@ -1449,7 +1485,10 @@ local function main()
 				parse[#parse+1] = part
 			end
 			if commands[parse[1]] ~= nil then
-				commands[parse[1]](table.unpack(parse,2))
+				local ok, err = pcall(commands[parse[1]], table.unpack(parse,2))
+				if not ok then
+					helper.addText("CmdError",err,theme.actions.error.color)
+				end
 			else
 				helper.addText("","No such command: " .. parse[1])
 			end
