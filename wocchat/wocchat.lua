@@ -428,6 +428,8 @@ end
 local function drawTextbar(x,y,width,text)
 	setBackground(theme.textbar.color)
 	gpu.fill(x,y,width,1," ")
+	-- TODO: Support drawing colors
+	text = table.concat(colorChunker(text,true),"")
 	if text ~= "" then
 		setForeground(theme.textbar.text.color)
 		gpu.set(x,y,unicode.sub(text,1,width))
@@ -1417,14 +1419,23 @@ local function main()
 						local match, command = line:match("^(([^:]%S*))")
 						if match then line = line:sub(#match + 1) end
 						local args = {}
+						local message
 						repeat
 							local match, arg = line:match("^( ([^:]%S*))")
+							-- HACK: sometimes arguments are in the message
+							if not match and #args == 0 then
+								message = line:match("^ :(.*)$")
+								if message then
+									line = " " .. message
+									match, arg = line:match("^( ([^:]%S*))")
+								end
+							end
 							if match then
 								line = line:sub(#match + 1)
 								table.insert(args, arg)
 							end
 						until not match
-						local message = line:match("^ :(.*)$")
+						message = message or line:match("^ :(.*)$")
 						local hco, hcerr = pcall(handleCommand, block, prefix, command, args, message)
 						if not hco then
 							helper.addTextToBlock(block,"LuaError",hcerr,theme.actions.error.color)
@@ -1540,3 +1551,5 @@ end
 if not stat then
 	errprint(err)
 end
+
+sdfjf:close()
