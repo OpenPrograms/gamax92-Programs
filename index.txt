@@ -3,11 +3,11 @@ Miscellaneous utilities for OpenComputers by Gamax92.
  enhanced/
 Modified versions of standard programs for improved or enhanced features.
 
+ filesystems/
+Various filesystem implementations for OpenComputers.
+
  immibis-compress/
 Immibis's compression programs ported to OpenComputers.
-
- KairosOS/
-Experimental kernel.
 
  OCNetFS/
 Networked (internet) filesystem for OpenComputers.
@@ -21,24 +21,21 @@ Common utilties found on many linux distributions.
  vcomponent/
 Virtual Components system for OpenComputers.
 
+ wocchat/
+WocChat IRC chat client for OpenComputers.
+
  chip8.lua
 CHIP8 emulator for OpenComputers. Requires OCLights2.
 
  debug.lua
 Program debugger for OpenComputers.
 
- fattest.lua
-Dump fat information provided by the msdos proxy.
+ ocwe.lua
+Basic implementation of WorldEdit in OpenComputers.
+Debug card necessary, tablet recommended.
 
- msdos.lua
-Provides a filesystem proxy for FAT formatted files.
-Requires vcomponent.lua from vcomponent/
-Install in /lib
+ unicode-more.lua
+Extra functions for the unicode api.
 
- tapefs.lua
-Provides a filesystem proxy that converts tape drives into files.
-Requires vcomponent.lua from vcomponent/
-Install in /lib
-
- tapefsd.lua
-Searches for all tape drives and mounts them with tapefs.
+ unrequire.lua
+Library unloader for OpenComputers.

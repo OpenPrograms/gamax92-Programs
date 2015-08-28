@@ -1,0 +1,7 @@
+WocChat IRC chat client for OpenComputers.
+
+ wocchat.cfg
+Default configuration file for WocChat.
+
+ wocchat.lua
+A graphical IRC client for OpenComputers.
