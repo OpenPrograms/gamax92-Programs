@@ -1,0 +1,40 @@
+Simple OpenComputers FileSystem.
+Based on this: http://www.d-rift.nl/combuster/vdisk/sfs.html
+
+Changes:
+Timestamps are based in seconds and not 1/65536ths of a second
+Magic ID is now 0x434F53 'SOC'
+Unused Entry moved to 0x00
+Unusable Entry moved to 0x17
+Versions are represented as #.## and are decimal, but otherwise the same.
+Unsure if already stated or not, but blocks are indexed from beginning of drive
+    (0) to the end of drive. Usable blocks are everything after the reserved.
+
+Volume Identifier format:
+Offset Size Description
+0x00   1    Entry type (0x01 for the Volume Identifier Entry)
+0x01   8    Time stamp
+0x09   16   Filesystem UUID
+0x19   39   Volume name in UTF-8, including zero terminator
+
+(Deleted) Continuation Entry:
+Offset Size Description
+0x00   1    Entry type (0x10 for Continuation Entries, 0x18 if deleted)
+0x01   59   Entry name in UTF8
+0x3C   4    Index of next entry (0 for no more entries)
+
+(Deleted) Directory Entry
+Offset Size Description
+0x00   1    Entry type (0x11 for Directory Entries, 0x19 if deleted)
+0x01   4    Index of first Continuation Entry (0 if unneeded)
+0x05   8    Time stamp
+0x0D   51   Directory name in UTF-8
+
+(Deleted) File Entry
+Offset Size Description
+0x00   1    Entry type (0x12 for File Entries, 0x1A if deleted)
+0x01   4    Index of first Continuation Entry (0 if unneeded)
+0x05   8    Time stamp
+0x0D   8    Starting block number in the data area
+0x15   8    File length in bytes
+0x1D   35   File name in UTF-8

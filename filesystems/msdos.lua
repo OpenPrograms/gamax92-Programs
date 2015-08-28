@@ -1012,7 +1012,7 @@ function msdos.proxy(fatfile, fatsize)
 		return filesize
 	end
 	proxyObj.isReadOnly = function()
-		return false -- TODO: Check if file is readonly
+		return fs.get(fatfile).isReadOnly()
 	end
 	proxyObj.setLabel = function(newlabel)
 		checkArg(1,newlabel,"string")
