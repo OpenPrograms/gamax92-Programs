@@ -6,45 +6,12 @@ This will not support FAT32.
 local vcomp = require("vcomponent")
 local fs = require("filesystem")
 local io = require("io")
+local fslib = require("fslib")
 
 local NUL = '\0'
 
 local msdos = {}
 local _msdos = {}
-
-function _msdos.readRawString(file, size)
-	local str = ""
-	while #str < size do
-		str = str .. file:read(size - #str)
-	end
-	return str
-end
-
-if string.pack then
-	function _msdos.string2number(data)
-		return string.unpack("<I" .. #data,data)
-	end
-
-	function _msdos.number2string(data, size)
-		return string.pack("<I" .. size,data)
-	end
-else
-	function _msdos.string2number(data)
-		local count = 0
-		for i = 1,#data do
-			count = count + bit32.lshift(data:byte(i,i),(i - 1) * 8)
-		end
-		return count
-	end
-
-	function _msdos.number2string(data, size)
-		local str = ""
-		for i = 1, size do
-			str = str .. string.char(bit32.rshift(bit32.band(data, bit32.lshift(0xFF, (i - 1) * 8)), (i - 1) * 8))
-		end
-		return str
-	end
-end
 
 function _msdos.validateName(name)
 	if name:find(".",nil,true) then
@@ -73,27 +40,23 @@ function _msdos.spacetrim(data)
 	return data
 end
 
-function _msdos.cleanPath(path)
-	return table.concat(fs.segments(path), "/"):lower()
-end
-
 function _msdos.readDirEntry(fatset,block,count)
 	local entry = {}
 	local filename = _msdos.spacetrim(block:sub(1,8))
 	local ext = _msdos.spacetrim(block:sub(9,11))
 	entry.rawfilename = filename .. (ext ~= "" and "." or "") .. ext
-	entry.filename = string.lower(entry.rawfilename)
-	entry.attrib = _msdos.string2number(block:sub(12,12))
-	entry.modifyT = _msdos.string2number(block:sub(23,24))
-	entry.modifyD = _msdos.string2number(block:sub(25,26))
+	entry.filename = entry.rawfilename:lower()
+	entry.attrib = fslib.str2num(block:sub(12,12))
+	entry.modifyT = fslib.str2num(block:sub(23,24))
+	entry.modifyD = fslib.str2num(block:sub(25,26))
 	local cluster
 	if fatset.fatsize == 12 then
-		cluster = _msdos.string2number(block:sub(27,28)) % 0x1000
+		cluster = fslib.str2num(block:sub(27,28)) % 0x1000
 	else
-		cluster = _msdos.string2number(block:sub(27,28))
+		cluster = fslib.str2num(block:sub(27,28))
 	end
 	entry.cluster = cluster
-	entry.size = _msdos.string2number(block:sub(29,32))
+	entry.size = fslib.str2num(block:sub(29,32))
 	return entry
 end
 
@@ -118,16 +81,16 @@ function _msdos.getFATEntry12(fatset, cluster)
 	cluster = cluster % 0x1000
 	local fatTable = fatset.fatCache.fatTable
 	if cluster % 2 == 0 then
-		return bit32.band(_msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2)), 0x0FFF)
+		return bit32.band(fslib.str2num(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2)), 0x0FFF)
 	else
-		return bit32.rshift(_msdos.string2number(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2)), 4)
+		return bit32.rshift(fslib.str2num(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2)), 4)
 	end
 end
 
 function _msdos.getFATEntry16(fatset, cluster)
 	cluster = cluster % 0x10000
 	local fatTable = fatset.fatCache.fatTable
-	return _msdos.string2number(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 2))
+	return fslib.str2num(fatTable:sub((cluster * 2) + 1, (cluster * 2) + 2))
 end
 
 function _msdos.getFATEntry(fatset, cluster)
@@ -145,8 +108,8 @@ function _msdos.setFATEntry12(fatset, file, cluster, data)
 	end
 	local fatTable = fatset.fatCache.fatTable
 	if cluster % 2 == 0 then
-		local fatcrap = _msdos.string2number(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2))
-		fatcrap = _msdos.number2string(bit32.band(fatcrap,0xF000) + bit32.band(data,0x0FFF), 2)
+		local fatcrap = fslib.str2num(fatTable:sub((cluster * 1.5) + 1, (cluster * 1.5) + 2))
+		fatcrap = fslib.num2str(bit32.band(fatcrap,0xF000) + bit32.band(data,0x0FFF), 2)
 
 		for i = 0,fatset.fatc - 1 do
 			file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc) + (cluster * 1.5))
@@ -154,8 +117,8 @@ function _msdos.setFATEntry12(fatset, file, cluster, data)
 		end
 		fatTable = fatTable:sub(1, (cluster * 1.5)) .. fatcrap .. fatTable:sub((cluster * 1.5) + 3)
 	else
-		local fatcrap = _msdos.string2number(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2))
-		fatcrap = _msdos.number2string(bit32.lshift(data,4) + bit32.band(fatcrap,0x000F), 2)
+		local fatcrap = fslib.str2num(fatTable:sub(math.floor(cluster * 1.5) + 1, math.floor(cluster * 1.5) + 2))
+		fatcrap = fslib.num2str(bit32.lshift(data,4) + bit32.band(fatcrap,0x000F), 2)
 
 		for i = 0,fatset.fatc - 1 do
 			file:seek("set", (fatset.bps * fatset.rb) + math.floor(cluster * 1.5))
@@ -172,7 +135,7 @@ function _msdos.setFATEntry16(fatset, file, cluster, data)
 		error("Attempted to modify cluster " .. cluster .. "\n" .. debug.traceback())
 	end
 	local fatTable = fatset.fatCache.fatTable
-	local fatcrap = _msdos.number2string(data, 2)
+	local fatcrap = fslib.num2str(data, 2)
 	for i = 0,fatset.fatc - 1 do
 		file:seek("set", (fatset.bps * fatset.rb) + (i * fatset.bps * fatset.fatbc) + (cluster * 2))
 		file:write(fatcrap)
@@ -243,7 +206,7 @@ function _msdos.readEntireEntry(fatset, file, startcluster)
 	local data = ""
 	for i = 1,#list - 1 do
 		file:seek("set", _msdos.cluster2block(fatset, list[i]) * fatset.bps)
-		data = data .. _msdos.readRawString(file, fatset.bps * fatset.spc)
+		data = data .. fslib.readRawString(file, fatset.bps * fatset.spc)
 	end
 	return data
 end
@@ -266,7 +229,7 @@ function _msdos.searchDirectoryLists(fatset, file, path)
 		local block
 		if i == 1 then
 			file:seek("set", fatset.bps * blockpos)
-			block = _msdos.readRawString(file, fatset.rdec * 32)				
+			block = fslib.readRawString(file, fatset.rdec * 32)				
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster)
 		end
@@ -322,7 +285,7 @@ function _msdos.doSomethingForFile(fatset, file, path, something)
 	file:seek("set", fatset.bps * blockpos)
 	local block
 	if entrycluster == nil then
-		block = _msdos.readRawString(file, fatset.rdec * 32)
+		block = fslib.readRawString(file, fatset.rdec * 32)
 	else
 		block = _msdos.readEntireEntry(fatset, file, entrycluster)
 	end
@@ -389,24 +352,24 @@ function msdos.proxy(fatfile, fatsize)
 	if pos == nil then
 		error("Seeking failed: " .. err)
 	end
-	local bbs = _msdos.readRawString(file, 8)
+	local bbs = fslib.readRawString(file, 8)
 	local fatset = {}
 	file:seek("set", 0)
-	local boot_block = _msdos.readRawString(file, 62)
-	fatset.bps = _msdos.string2number(boot_block:sub(0x0C, 0x0D))
-	fatset.spc = _msdos.string2number(boot_block:sub(0x0E, 0x0E))
-	fatset.rb = _msdos.string2number(boot_block:sub(0x0F, 0x10))
-	fatset.fatc = _msdos.string2number(boot_block:sub(0x11, 0x11))
-	fatset.rdec = _msdos.string2number(boot_block:sub(0x12, 0x13))
-	fatset.fatbc = _msdos.string2number(boot_block:sub(0x17, 0x18))
-	fatset.hbc = _msdos.string2number(boot_block:sub(0x1D, 0x20))
-	fatset.vsn = _msdos.string2number(boot_block:sub(0x28, 0x2B))
+	local boot_block = fslib.readRawString(file, 62)
+	fatset.bps = fslib.str2num(boot_block:sub(0x0C, 0x0D))
+	fatset.spc = fslib.str2num(boot_block:sub(0x0E, 0x0E))
+	fatset.rb = fslib.str2num(boot_block:sub(0x0F, 0x10))
+	fatset.fatc = fslib.str2num(boot_block:sub(0x11, 0x11))
+	fatset.rdec = fslib.str2num(boot_block:sub(0x12, 0x13))
+	fatset.fatbc = fslib.str2num(boot_block:sub(0x17, 0x18))
+	fatset.hbc = fslib.str2num(boot_block:sub(0x1D, 0x20))
+	fatset.vsn = fslib.str2num(boot_block:sub(0x28, 0x2B))
 	fatset.bpblabel = boot_block:sub(0x2C, 0x36)
 	fatset.label = _msdos.spacetrim(fatset.bpblabel)
 	fatset.ident = boot_block:sub(0x37, 0x3E)
-	local tnos = _msdos.string2number(boot_block:sub(0x14, 0x15))
+	local tnos = fslib.str2num(boot_block:sub(0x14, 0x15))
 	if tnos == 0 then
-		tnos = _msdos.string2number(boot_block:sub(0x21, 0x24))
+		tnos = fslib.str2num(boot_block:sub(0x21, 0x24))
 	end
 	fatset.tnos = tnos
 	fatset.tnoc = math.floor(tnos / fatset.spc)
@@ -434,7 +397,7 @@ function msdos.proxy(fatfile, fatsize)
 	file:seek("set", fatset.bps * fatset.rb)
 	local fats = {}
 	for i = 1,fatset.fatc do
-		fats[i] = _msdos.readRawString(file, fatset.bps * fatset.fatbc)
+		fats[i] = fslib.readRawString(file, fatset.bps * fatset.fatbc)
 	end
 	file:close()
 	if fatset.fatc > 1 then -- Validate FATs are the same
@@ -456,7 +419,7 @@ function msdos.proxy(fatfile, fatsize)
 	proxyObj.address = string.format("%04x",math.floor(fatset.vsn/65536)) .. "-" .. string.format("%04x",fatset.vsn % 0x10000) -- FAT Serial Number
 	proxyObj.isDirectory = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			return true
 		end
@@ -471,7 +434,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.lastModified = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			-- No modification date for root directory
 			return 0
@@ -493,7 +456,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.list = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		local file = io.open(fatfile,"rb")
 		found, blockpos, entrycluster = _msdos.searchDirectoryLists(fatset, file, path)
 		if found == false then
@@ -503,7 +466,7 @@ function msdos.proxy(fatfile, fatsize)
 		local block
 		if entrycluster == nil then
 			file:seek("set", fatset.bps * blockpos)
-			block = _msdos.readRawString(file, fatset.rdec * 32)
+			block = fslib.readRawString(file, fatset.rdec * 32)
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster)
 		end
@@ -532,7 +495,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.exists = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			return true
 		end
@@ -547,7 +510,7 @@ function msdos.proxy(fatfile, fatsize)
 		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "wb" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode",2)
 		end
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			return nil, "file not found"
 		end
@@ -572,7 +535,7 @@ function msdos.proxy(fatfile, fatsize)
 				local block
 				if entrycluster == nil then
 					file:seek("set", fatset.bps * blockpos)
-					block = _msdos.readRawString(file, fatset.rdec * 32)
+					block = fslib.readRawString(file, fatset.rdec * 32)
 				else
 					block = _msdos.readEntireEntry(fatset, file, entrycluster)
 				end
@@ -600,7 +563,7 @@ function msdos.proxy(fatfile, fatsize)
 						if curDate.year - 1980 < 0 then
 							print("msdos: WARNING: Current year before 1980, year will be invalid")
 						end
-						local entry = filename .. ext .. string.char(0x20) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. string.rep(NUL, 6)
+						local entry = filename .. ext .. string.char(0x20) .. string.rep(NUL, 10) .. fslib.num2str(createT,2) .. fslib.num2str(createD,2) .. string.rep(NUL, 6)
 						if entrycluster == nil then
 							file:close()
 							file = io.open(fatfile,"ab")
@@ -664,7 +627,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.remove = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			-- TODO: Simply clear the root directory and the fat table.
 			return false
@@ -683,7 +646,7 @@ function msdos.proxy(fatfile, fatsize)
 		local block
 		if entrycluster == nil then
 			file:seek("set", fatset.bps * blockpos)
-			block = _msdos.readRawString(file, fatset.rdec * 32)
+			block = fslib.readRawString(file, fatset.rdec * 32)
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster)
 		end
@@ -750,8 +713,8 @@ function msdos.proxy(fatfile, fatsize)
 	proxyObj.rename = function(path, newpath)
 		checkArg(1,path,"string")
 		checkArg(2,newpath,"string")
-		path = _msdos.cleanPath(path)
-		newpath = _msdos.cleanPath(newpath)
+		path = fslib.cleanPath(path)
+		newpath = fslib.cleanPath(newpath)
 		if path == "" or newpath == "" then
 			return false
 		elseif path == newpath then
@@ -781,7 +744,7 @@ function msdos.proxy(fatfile, fatsize)
 		local block
 		if entrycluster == nil then
 			file:seek("set", fatset.bps * blockpos)
-			block = _msdos.readRawString(file, fatset.rdec * 32)
+			block = fslib.readRawString(file, fatset.rdec * 32)
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster)
 		end
@@ -802,7 +765,7 @@ function msdos.proxy(fatfile, fatsize)
 				end
 				filename = filename .. string.rep(" ", 8 - #filename)
 				ext = ext .. string.rep(" ", 3 - #ext)
-				entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(data.modifyT, 2) .. _msdos.number2string(data.modifyD, 2) .. _msdos.number2string(data.cluster, 2) .. _msdos.number2string(data.size, 4)
+				entry = filename .. ext .. fslib.num2str(data.attrib, 1) .. string.rep(NUL, 10) .. fslib.num2str(data.modifyT, 2) .. fslib.num2str(data.modifyD, 2) .. fslib.num2str(data.cluster, 2) .. fslib.num2str(data.size, 4)
 				break
 			end
 		end
@@ -812,7 +775,7 @@ function msdos.proxy(fatfile, fatsize)
 		end
 		if entrycluster2 == nil then
 			file:seek("set", fatset.bps * blockpos2)
-			block = _msdos.readRawString(file, fatset.rdec * 32)
+			block = fslib.readRawString(file, fatset.rdec * 32)
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster2)
 		end
@@ -881,7 +844,7 @@ function msdos.proxy(fatfile, fatsize)
 			local block = _msdos.cluster2block(fatset, filedescript[fd].chain[nextchain])
 			local file = io.open(fatfile,"rb")
 			file:seek("set", block * fatset.bps)
-			local data = _msdos.readRawString(file, fatset.bps * fatset.spc)
+			local data = fslib.readRawString(file, fatset.bps * fatset.spc)
 			file:close()
 			filedescript[fd].buffer = filedescript[fd].buffer .. data
 		end
@@ -947,7 +910,7 @@ function msdos.proxy(fatfile, fatsize)
 			if curDate.year - 1980 < 0 then
 				print("msdos: WARNING: Current year before 1980, year will be invalid")
 			end
-			local entry = filename .. ext .. _msdos.number2string(data.attrib, 1) .. string.rep(NUL, 10) .. _msdos.number2string(createT, 2) .. _msdos.number2string(createD, 2) .. _msdos.number2string(clusters > 0 and filedescript[fd].chain[1] or 0, 2) .. _msdos.number2string(#filedescript[fd].buffer, 4)
+			local entry = filename .. ext .. fslib.num2str(data.attrib, 1) .. string.rep(NUL, 10) .. fslib.num2str(createT, 2) .. fslib.num2str(createD, 2) .. fslib.num2str(clusters > 0 and filedescript[fd].chain[1] or 0, 2) .. fslib.num2str(#filedescript[fd].buffer, 4)
 			if entrycluster == nil then
 				file:close()
 				file = io.open(fatfile,"ab")
@@ -998,7 +961,7 @@ function msdos.proxy(fatfile, fatsize)
 	end
 	proxyObj.size = function(path)
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			return 0
 		end
@@ -1033,7 +996,7 @@ function msdos.proxy(fatfile, fatsize)
 	proxyObj.makeDirectory = function(path)
 		-- TODO: Recursively make folders
 		checkArg(1,path,"string")
-		path = _msdos.cleanPath(path)
+		path = fslib.cleanPath(path)
 		if path == "" then
 			return false
 		end
@@ -1064,7 +1027,7 @@ function msdos.proxy(fatfile, fatsize)
 		local block
 		if entrycluster == nil then
 			file:seek("set", fatset.bps * blockpos)
-			block = _msdos.readRawString(file, fatset.rdec * 32)
+			block = fslib.readRawString(file, fatset.rdec * 32)
 		else
 			block = _msdos.readEntireEntry(fatset, file, entrycluster)
 		end
@@ -1079,7 +1042,7 @@ function msdos.proxy(fatfile, fatsize)
 				if curDate.year - 1980 < 0 then
 					print("msdos: WARNING: Current year before 1980, year will be invalid")
 				end
-				local entry = filename .. ext .. string.char(0x30) .. string.rep(NUL, 10) .. _msdos.number2string(createT,2) .. _msdos.number2string(createD,2) .. _msdos.number2string(freeCluster, 2) .. string.rep(NUL, 4)
+				local entry = filename .. ext .. string.char(0x30) .. string.rep(NUL, 10) .. fslib.num2str(createT,2) .. fslib.num2str(createD,2) .. fslib.num2str(freeCluster, 2) .. string.rep(NUL, 4)
 				if entrycluster == nil then
 					file:close()
 					file = io.open(fatfile,"ab")

@@ -9,6 +9,7 @@ it so that I'm not looping through the entire index every time.
 local vcomp = require("vcomponent")
 local fs = require("filesystem")
 local io = require("io")
+local fslib = require("fslib")
 
 local socfs = {}
 local _socfs = {}
@@ -17,54 +18,12 @@ local function dprint(...)
     print("[socfs] " .. select(1, ...), select(2, ...))
 end
 
-function _socfs.readRawString(file, size)
-    local str = ""
-    while #str < size do
-        str = str .. file:read(size - #str)
-    end
-    return str
-end
-
-if string.pack then
-    function _socfs.str2num(data)
-        return string.unpack("<I" .. #data, data)
-    end
-
-    function _socfs.num2str(data, size)
-        return string.pack("<I" .. size, data)
-    end
-else
-    function _socfs.str2num(data)
-        local count = 0
-        for i = 1, #data do
-            count = count + bit32.lshift(data:byte(i, i), (i - 1) * 8)
-        end
-        return count
-    end
-
-    function _socfs.num2str(data, size)
-        local str = ""
-        for i = 1, size do
-            str = str .. string.char(bit32.rshift(bit32.band(data, bit32.lshift(0xFF, (i - 1) * 8)), (i - 1) * 8))
-        end
-        return str
-    end
-end
-
 function _socfs.readStr(str)
     return (str .. "\0"):match("(.-)\0")
 end
 
-function _socfs.cleanPath(path)
-    return table.concat(fs.segments(path), "/")
-end
-
-function _socfs.getParent(path)
-    return path:match("(.*)/") or ""
-end
-
 function _socfs.vfs2index(socdat, path)
-    local parent, name = _socfs.getParent(path), fs.name(path)
+    local parent, name = fslib.getParent(path), fs.name(path)
     local dir = socdat.vfs[parent]
     if dir == nil then return end
     for i = 1, #dir do
@@ -120,15 +79,15 @@ function socfs.proxy(socfile)
 
     local socdat = {}
     file:seek("set", 0x194)
-    local superblock = _socfs.readRawString(file, 41)
-    socdat.modtime   = _socfs.str2num(superblock:sub(0x01, 0x08))
-    socdat.datasize  = _socfs.str2num(superblock:sub(0x09, 0x10))
-    socdat.indexsize = _socfs.str2num(superblock:sub(0x11, 0x18))
-    socdat.magic     = _socfs.str2num(superblock:sub(0x19, 0x1B))
-    socdat.version   = _socfs.str2num(superblock:sub(0x1C, 0x1C))
-    socdat.total     = _socfs.str2num(superblock:sub(0x1D, 0x24))
-    socdat.reserve   = _socfs.str2num(superblock:sub(0x25, 0x28))
-    socdat.logblock  = _socfs.str2num(superblock:sub(0x29, 0x29))
+    local superblock = fslib.readRawString(file, 41)
+    socdat.modtime   = fslib.str2num(superblock:sub(0x01, 0x08))
+    socdat.datasize  = fslib.str2num(superblock:sub(0x09, 0x10))
+    socdat.indexsize = fslib.str2num(superblock:sub(0x11, 0x18))
+    socdat.magic     = fslib.str2num(superblock:sub(0x19, 0x1B))
+    socdat.version   = fslib.str2num(superblock:sub(0x1C, 0x1C))
+    socdat.total     = fslib.str2num(superblock:sub(0x1D, 0x24))
+    socdat.reserve   = fslib.str2num(superblock:sub(0x25, 0x28))
+    socdat.logblock  = fslib.str2num(superblock:sub(0x29, 0x29))
 
     socdat.filesize   = fs.size(socfile)
     socdat.blocksize  = 2^(socdat.logblock+7)
@@ -165,33 +124,33 @@ function socfs.proxy(socfile)
     -- Cache the Index Area
     socdat.index = {}
     file:seek("set", socdat.total*socdat.blocksize - socdat.indexsize)
-    local indexdata = _socfs.readRawString(file, socdat.indexsize)
+    local indexdata = fslib.readRawString(file, socdat.indexsize)
     for i = 1, socdat.indexcount do
         local entrydat = indexdata:sub(socdat.indexsize-i*64+1, socdat.indexsize-i*64+64)
         local entry = {type = entrydat:byte(1, 1)}
         if entry.type == 0x00 or entry.type == 0x02 then
         elseif entry.type == 0x01 then
-            entry.time = _socfs.str2num(entrydat:sub(0x02, 0x09))
+            entry.time = fslib.str2num(entrydat:sub(0x02, 0x09))
             local uuid = entrydat:sub(0x0A, 0x19):gsub(".", function(a) return string.format("%02x", a:byte()) end)
             entry.uuid = uuid:sub(1, 8) .. "-" .. uuid:sub(9, 12) .. "-" .. uuid:sub(13, 16) .. "-" .. uuid:sub(17, 20) .. "-" .. uuid:sub(21, 32)
             proxyObj.address = entry.uuid
             entry.label = _socfs.readStr(entrydat:sub(0x1A))
         elseif entry.type == 0x10 or entry.type == 0x18 then
             entry.part = _socfs.readStr(entrydat:sub(0x02, 0x3C))
-            entry.next = _socfs.str2num(entrydat:sub(0x3D, 0x40))
+            entry.next = fslib.str2num(entrydat:sub(0x3D, 0x40))
         elseif entry.type == 0x11 or entry.type == 0x19 then
-            entry.next = _socfs.str2num(entrydat:sub(0x02, 0x05))
-            entry.time = _socfs.str2num(entrydat:sub(0x06, 0x0D))
+            entry.next = fslib.str2num(entrydat:sub(0x02, 0x05))
+            entry.time = fslib.str2num(entrydat:sub(0x06, 0x0D))
             entry.part = _socfs.readStr(entrydat:sub(0x0E))
         elseif entry.type == 0x12 or entry.type == 0x1A then
-            entry.next = _socfs.str2num(entrydat:sub(0x02, 0x05))
-            entry.time = _socfs.str2num(entrydat:sub(0x06, 0x0D))
-            entry.block = _socfs.str2num(entrydat:sub(0x0E, 0x15))
-            entry.length = _socfs.str2num(entrydat:sub(0x16, 0x1D))
+            entry.next = fslib.str2num(entrydat:sub(0x02, 0x05))
+            entry.time = fslib.str2num(entrydat:sub(0x06, 0x0D))
+            entry.block = fslib.str2num(entrydat:sub(0x0E, 0x15))
+            entry.length = fslib.str2num(entrydat:sub(0x16, 0x1D))
             entry.part = _socfs.readStr(entrydat:sub(0x1E))
         elseif entry.type == 0x17 then
-            entry.start = _socfs.str2num(entrydat:sub(0x0B, 0x12))
-            entry.last = _socfs.str2num(entrydat:sub(0x13, 0x1A))
+            entry.start = fslib.str2num(entrydat:sub(0x0B, 0x12))
+            entry.last = fslib.str2num(entrydat:sub(0x13, 0x1A))
         else
             error(string.format("Index " .. i .. " has unknown type: 0x%02X", entry.type))
         end
@@ -215,7 +174,7 @@ function socfs.proxy(socfile)
                 entry.name = entry.name .. socdat.index[next].part
                 next = socdat.index[next].next
             end
-            entry.name = _socfs.cleanPath(entry.name)
+            entry.name = fslib.cleanPath(entry.name)
             if entry.name == "" then
                 error("Index " .. i .. " has an empty name")
             end
@@ -231,7 +190,7 @@ function socfs.proxy(socfile)
                 socdat.vfs[entry.name] = {}
             end
         elseif entry.type == 0x12 then
-            local parent = _socfs.getParent(entry.name)
+            local parent = fslib.getParent(entry.name)
             if socdat.vfs[parent] == nil then
                 socdat.vfs[parent] = {}
             end
@@ -240,7 +199,7 @@ function socfs.proxy(socfile)
     for i = 1, socdat.indexcount do
         local entry = socdat.index[i]
         if entry.type == 0x11 or entry.type == 0x12 then
-            local parent = _socfs.getParent(entry.name)
+            local parent = fslib.getParent(entry.name)
             table.insert(socdat.vfs[parent], {i, fs.name(entry.name)})
         end
     end
@@ -278,7 +237,7 @@ function socfs.proxy(socfile)
 
     function proxyObj.list(path)
         checkArg(1, path, "string")
-        path = _socfs.cleanPath(path)
+        path = fslib.cleanPath(path)
         local dir = socdat.vfs[path]
         if dir == nil then
             return nil, "no such file or directory"
@@ -296,15 +255,15 @@ function socfs.proxy(socfile)
     end
     function proxyObj.exists(path)
         checkArg(1, path, "string")
-        return _socfs.vfs2index(socdat, _socfs.cleanPath(path)) ~= nil
+        return _socfs.vfs2index(socdat, fslib.cleanPath(path)) ~= nil
     end
     function proxyObj.isDirectory(path)
         checkArg(1, path, "string")
-        return socdat.vfs[_socfs.cleanPath(path)] ~= nil
+        return socdat.vfs[fslib.cleanPath(path)] ~= nil
     end
     function proxyObj.size(path)
         checkArg(1, path, "string")
-        local index = _socfs.vfs2index(socdat, _socfs.cleanPath(path))
+        local index = _socfs.vfs2index(socdat, fslib.cleanPath(path))
         if index == nil or (index.type ~= 0x12 and index.type ~= 0x1A) then
             return 0
         end
@@ -312,8 +271,8 @@ function socfs.proxy(socfile)
     end
     function proxyObj.lastModified(path)
         checkArg(1, path, "string")
-        path = _socfs.cleanPath(path)
-        local index = _socfs.vfs2index(socdat, _socfs.cleanPath(path))
+        path = fslib.cleanPath(path)
+        local index = _socfs.vfs2index(socdat, fslib.cleanPath(path))
         if index == nil then
             return 0
         end
@@ -323,8 +282,8 @@ function socfs.proxy(socfile)
     function proxyObj.makeDirectory(path)
         -- TODO: Recursive
         checkArg(1, path, "string")
-        path = _socfs.cleanPath(path)
-        local parent = _socfs.getParent(path)
+        path = fslib.cleanPath(path)
+        local parent = fslib.getParent(path)
         if socdat.vfs[path] ~= nil then
             return false
         end
@@ -337,21 +296,21 @@ function socfs.proxy(socfile)
         for i = 1, icount do
             ilist[i] = _socfs.findFreeIndex(socdat)
             if ilist[i] == nil then
-                return nil, "not enough space" 
+                return nil, "not enough space"
             end
         end
         socdat.index[ilist[1]] = {
-            type = 0x11, 
-            next = ilist[2] or 0, 
-            time = os.time(), 
-            part = path:sub(1, 51), 
-            name = path, 
+            type = 0x11,
+            next = ilist[2] or 0,
+            time = os.time(),
+            part = path:sub(1, 51),
+            name = path,
         }
         for i = 2, icount do
             socdat.index[ilist[i]] = {
-                type = 0x10, 
-                part = path:sub((i-1)*59-7, (i-1)*59+51), 
-                next = ilist[i+1] or 0, 
+                type = 0x10,
+                part = path:sub((i-1)*59-7, (i-1)*59+51),
+                next = ilist[i+1] or 0,
             }
         end
         for i = 1, icount do
@@ -365,14 +324,14 @@ function socfs.proxy(socfile)
     function proxyObj.rename(from, to)
         checkArg(1, from, "string")
         checkArg(2, to, "string")
-        from = _socfs.cleanPath(from)
-        to = _socfs.cleanPath(to)
+        from = fslib.cleanPath(from)
+        to = fslib.cleanPath(to)
         -- TODO: Stub
         return false
     end
     function proxyObj.remove(path)
         checkArg(1, path, "string")
-        path = _socfs.cleanPath(path)
+        path = fslib.cleanPath(path)
         -- TODO: Stub
         return false
     end
@@ -382,7 +341,7 @@ function socfs.proxy(socfile)
 		if mode ~= "r" and mode ~= "rb" and mode ~= "w" and mode ~= "wb" and mode ~= "a" and mode ~= "ab" then
 			error("unsupported mode", 2)
 		end
-        path = _socfs.cleanPath(path)
+        path = fslib.cleanPath(path)
         -- TODO: Stub
 		return nil, "file not found"
     end
