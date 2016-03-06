@@ -17,6 +17,7 @@ elseif not component.isAvailable("internet") then
 end
 
 local version = "v0.0.2"
+local newterm = _OSVERSION ~= "OpenOS 1.5"
 
 local bit32 = require("bit32")
 local computer = require("computer")
@@ -27,6 +28,7 @@ local shell = require("shell")
 local term = require("term")
 local text = require("text")
 local unicode = require("unicode")
+local process = require("process")
 
 local args, options = shell.parse(...)
 
@@ -436,30 +438,44 @@ local function drawTextbar(x,y,width,text)
 	end
 end
 
-local customGPU = {
-	gpuSetup = function(self, x,y,width,height)
+local customGPU={}
+if newterm then
+	customGPU.gpu = {
+		setForeground = function() end,
+		setBackground = function() end,
+	}
+else
+	customGPU.gpu = {
+		set = function(x,y,s,v) return gpu.set(x+customGPU.x-1,y+customGPU.y-1,s,v ~= nil and v) end,
+		get = function(x,y) return gpu.get(x+customGPU.x-1,y+customGPU.y-1) end,
+		getResolution = function() return customGPU.width, customGPU.height end,
+		copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+customGPU.x-1,y+customGPU.y-1,w,h,tx,ty) end end,
+		fill = function(x,y,w,h,c) return gpu.fill(x+customGPU.x-1,y+customGPU.y-1,w,h,c) end,
+	}
+end
+setmetatable(customGPU.gpu,{
+	__index = function(_,k)
+		if gpu[k] ~= nil then
+			return gpu[k]
+		end
+	end
+})
+function customGPU:gpuSetup(x,y,width,height)
+	if self.window then
+		self.window.dx=x-1
+		self.window.dy=y-1
+		self.window.w=width
+		self.window.h=height
+	else
 		self.x=x
 		self.y=y
 		self.width=width
 		self.height=height
-		if self.gpu == nil then
-			self.gpu = {
-				set = function(x,y,s,v) return gpu.set(x+self.x-1,y+self.y-1,s,v ~= nil and v) end,
-				get = function(x,y) return gpu.get(x+self.x-1,y+self.y-1) end,
-				getResolution = function() return self.width, self.height end,
-				copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+self.x-1,y+self.y-1,w,h,tx,ty) end end,
-				fill = function(x,y,w,h,c) return gpu.fill(x+self.x-1,y+self.y-1,w,h,c) end,
-			}
-			setmetatable(self.gpu,{
-				__index = function(_,k)
-					if gpu[k] ~= nil then
-						return gpu[k]
-					end
-				end
-			})
-		end
 	end
-}
+end
+if not newterm then
+	customGPU:gpuSetup(1,1,gpu.getResolution())
+end
 
 local function _redraw(first)
 	local yoffset
@@ -1516,17 +1532,47 @@ local function main()
 end
 
 -- Hijack needed for term.read
-local old_getPrimary = component.getPrimary
-function component.getPrimary(componentType)
-	checkArg(1, componentType, "string")
-	assert(component.isAvailable(componentType), "no primary '" .. componentType .. "' available")
-	if componentType == "gpu" then
-		return customGPU.gpu or old_getPrimary(componentType)
+local old_getPrimary, old_print
+if newterm then
+	local w,h,dx,dy,x,y = term.getViewport()
+	local oldwindow = {
+		gpu=term.gpu(),
+		screen=term.screen(),
+		keyboard=term.keyboard(),
+		w=w,
+		h=h,
+		dx=dx,
+		dy=dy,
+		x=x,
+		y=y
+	}
+	old_print = print
+	function print(msg)
+		term.drawText(msg, true, oldwindow)
 	end
-	return old_getPrimary(componentType)
+	
+	local window = term.internal.open()
+	term.bind(window, customGPU.gpu, term.screen(), term.keyboard())
+	process.info().data.window = window
+	customGPU.window = window
+else
+	old_getPrimary = component.getPrimary
+	function component.getPrimary(componentType)
+		checkArg(1, componentType, "string")
+		assert(component.isAvailable(componentType), "no primary '" .. componentType .. "' available")
+		if componentType == "gpu" then
+			return customGPU.gpu or old_getPrimary(componentType)
+		end
+		return old_getPrimary(componentType)
+	end
 end
 local stat, err = xpcall(main,debug.traceback)
-component.getPrimary = old_getPrimary
+if newterm then
+	process.info().data.window = nil
+	print = old_print
+else
+	component.getPrimary = old_getPrimary
+end
 for i = 1,#blocks do
 	if blocks[i].sock then
 		pcall(blocks[i].sock.write, blocks[i].sock, "QUIT\r\n")
@@ -1551,5 +1597,3 @@ end
 if not stat then
 	errprint(err)
 end
-
-sdfjf:close()
