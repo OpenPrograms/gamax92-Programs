@@ -440,9 +440,10 @@ end
 
 local customGPU={}
 if newterm then
+	-- New term does not handle palette colors properly yet, hack around this.
 	customGPU.gpu = {
-		setForeground = function() end,
-		setBackground = function() end,
+		setForeground = function(color) gpu.setForeground(color, true) end,
+		setBackground = function(color) gpu.setBackground(color, true) end,
 	}
 else
 	customGPU.gpu = {
@@ -1552,6 +1553,7 @@ if newterm then
 	end
 	
 	local window = term.internal.open()
+	-- TODO: window will eventually be moved to the end in later updates.
 	term.bind(window, customGPU.gpu, term.screen(), term.keyboard())
 	process.info().data.window = window
 	customGPU.window = window
