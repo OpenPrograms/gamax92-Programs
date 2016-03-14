@@ -91,10 +91,8 @@ end
 -- Write header
 newfile:write("OOCI")
 w8(1) -- Version
-w8(width)
-w8(0) -- Width
-w8(height)
-w8(0) -- Height
+w8(width,0) -- Width
+w8(height,0) -- Height
 -- Write palette colors
 w8(16) -- Number of Palette Entries
 for i = 0,15 do
