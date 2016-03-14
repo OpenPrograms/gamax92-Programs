@@ -1,0 +1,10 @@
+Optimized OpenComputers Image utilties
+
+ ctif2ooci
+Compile CTIF formatted images to OOCI images
+
+ ooci-view
+View Compiled OOCI images
+
+ ooci.txt
+CTIF and OOCI documentation

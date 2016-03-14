@@ -1,0 +1,84 @@
+Size    | Description
+--------+--------------------------
+4 bytes | "CTIF"
+1 byte  | Header Version (1)
+1 byte  | Platform Variant (0)
+2 bytes | Platform ID (1 = OC, 2 = CC)
+2 bytes | Image Width (Characters)
+2 bytes | Image Height (Characters)
+1 byte  | Character Width (Pixels)
+1 byte  | Character Height (Pixels)
+1 byte  | Bits per Character [BPC]
+1 byte  | Bytes per Palette entry
+2 bytes | Number of Palette entries
+--------+--------------------------
+ N/A    | Palette entries
+--------+--------------------------
+ N/A    | Image Data
+
+Image Data:
+If BPC == 4
+    1 byte | Background and Foreground Color (BG = 0b11110000, FG = 0b00001111)
+Else If BPC == 8
+    1 byte | Background Color
+	1 byte | Foreground Color
+1 byte  | Character bits (Platform ID dependant)
+
+================================================================================
+
+Size    | Description
+--------+--------------------------
+4 bytes | "OOCI"
+1 byte  | Header Version (1)
+2 bytes | Image Width (Characters)
+2 bytes | Image Height (Characters)
+1 byte  | Number of Palette entries
+--------+--------------------------
+ N/A    | Palette entries
+--------+--------------------------
+ N/A    | Instructions
+
+Note: Image Width and Height are only a guideline
+
+Instructions:
+0x00: Set Background
+1 byte | 0x00
+1 byte | Background Color (0-15 = Palette, 16-255 = RGB685)
+
+0x01: Set Foreground
+1 byte | 0x01
+1 byte | Foreground Color (0-15 = Palette, 16-255 = RGB685)
+
+0x02: Set Character
+1 byte | 0x02
+1 byte | X position
+1 byte | Y position
+1 byte | Character (0-255 = 0x2800-0x28FF)
+
+0x03: Set Character Horizontal
+1 byte | 0x03
+1 byte | X position
+1 byte | Y position
+1 byte | Length
+1 byte | Character (0-255 = 0x2800-0x28FF)
+
+0x04: Set Character Vertical
+1 byte | 0x04
+1 byte | X position
+1 byte | Y position
+1 byte | Length
+1 byte | Character (0-255 = 0x2800-0x28FF)
+
+0x05: Set Characters Horizontal
+1 byte | 0x05
+1 byte | X position
+1 byte | Y position
+1 byte | Length
+Length | Characters (0-255 = 0x2800-0x28FF)
+
+0x06: Set Characters Vertical
+1 byte | 0x06
+1 byte | X position
+1 byte | Y position
+1 byte | Length
+Length | Characters (0-255 = 0x2800-0x28FF)
