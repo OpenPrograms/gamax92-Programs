@@ -3,6 +3,9 @@ Optimized OpenComputers Image utilties
  ctif2ooci
 Compile CTIF formatted images to OOCI images
 
+ ooci2ctif
+Decompile OOCI images back into CTIF images
+
  ooci-view
 View Compiled OOCI images
 
