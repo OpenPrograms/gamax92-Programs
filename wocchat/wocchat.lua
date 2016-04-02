@@ -62,13 +62,13 @@ local function saveScreen()
 end
 
 local function restoreScreen()
-	term.setCursor(1,screen.height)
-	gpu.setBackground(table.unpack(screen.bg))
-	gpu.setForeground(table.unpack(screen.fg))
 	print("Restoring screen ...")
 	for i = 0,15 do
 		gpu.setPaletteColor(i,screen.palette[i])
 	end
+	term.setCursor(1,screen.height)
+	gpu.setBackground(table.unpack(screen.bg))
+	gpu.setForeground(table.unpack(screen.fg))
 end
 
 local function loadConfig()
@@ -440,11 +440,7 @@ end
 
 local customGPU={}
 if newterm then
-	-- New term does not handle palette colors properly yet, hack around this.
-	customGPU.gpu = {
-		setForeground = function(color) gpu.setForeground(color, true) end,
-		setBackground = function(color) gpu.setBackground(color, true) end,
-	}
+	customGPU.gpu = {}
 else
 	customGPU.gpu = {
 		set = function(x,y,s,v) return gpu.set(x+customGPU.x-1,y+customGPU.y-1,s,v ~= nil and v) end,
@@ -1553,8 +1549,7 @@ if newterm then
 	end
 	
 	local window = term.internal.open()
-	-- TODO: window will eventually be moved to the end in later updates.
-	term.bind(window, customGPU.gpu, term.screen(), term.keyboard())
+	term.bind(customGPU.gpu, term.screen(), term.keyboard(), window)
 	process.info().data.window = window
 	customGPU.window = window
 else
