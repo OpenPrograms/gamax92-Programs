@@ -439,9 +439,7 @@ local function drawTextbar(x,y,width,text)
 end
 
 local customGPU={}
-if newterm then
-	customGPU.gpu = {}
-else
+if not newterm then
 	customGPU.gpu = {
 		set = function(x,y,s,v) return gpu.set(x+customGPU.x-1,y+customGPU.y-1,s,v ~= nil and v) end,
 		get = function(x,y) return gpu.get(x+customGPU.x-1,y+customGPU.y-1) end,
@@ -1472,7 +1470,7 @@ local function main()
 			helper.joinServer(k)
 		end
 	end
-	local history = {}
+	local history = {nowrap=true}
 	while true do
 		if dirty.blocks or dirty.title or dirty.window or dirty.nicks then
 			redraw()
