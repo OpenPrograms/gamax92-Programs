@@ -16,7 +16,7 @@ elseif not component.isAvailable("internet") then
 	return
 end
 
-local version = "v0.0.2"
+local version = "v0.0.3"
 local newterm = _OSVERSION ~= "OpenOS 1.5"
 
 local bit32 = require("bit32")
@@ -53,22 +53,24 @@ end
 
 local function saveScreen()
 	local width,height = gpu.getResolution()
-	screen = {palette={},width=width,height=height}
+	screen = {palette={},width=width,height=height,depth=gpu.getDepth()}
 	for i = 0,15 do
 		screen.palette[i] = gpu.getPaletteColor(i)
 	end
-	screen.bg = {gpu.getBackground()}
-	screen.fg = {gpu.getForeground()}
+	screen.bg = table.pack(gpu.getBackground())
+	screen.fg = table.pack(gpu.getForeground())
 end
 
 local function restoreScreen()
 	print("Restoring screen ...")
+	gpu.setDepth(screen.depth)
 	for i = 0,15 do
 		gpu.setPaletteColor(i,screen.palette[i])
 	end
 	term.setCursor(1,screen.height)
 	gpu.setBackground(table.unpack(screen.bg))
 	gpu.setForeground(table.unpack(screen.fg))
+	term.clear()
 end
 
 local function loadConfig()
@@ -358,7 +360,7 @@ local function drawWindow(x,width,height,irctext)
 	for i = 1,#irctext do
 		local first = true
 		local line = irctext[i][2]:gsub("[\2\29\31]",""):gsub("\15+","\15")
-		if not config.wocchat.showcolors or gpu.maxDepth() < 8 then
+		if not config.wocchat.showcolors or gpu.getDepth() < 8 then
 			line = table.concat(colorChunker(line,true),"")
 		end
 		for part in basicWrap(line,textwidth) do
@@ -394,7 +396,7 @@ local function drawWindow(x,width,height,irctext)
 			end
 			gpu.set(x+nickwidth-unicode.wlen(buffer[i][1]),i+1,buffer[i][1])
 		end
-		if config.wocchat.showcolors and gpu.maxDepth() >= 8 then
+		if config.wocchat.showcolors and gpu.getDepth() >= 8 then
 			local chunk = colorChunker(buffer[i][2])
 			local xpos = x+nickwidth+1
 			if buffer[i][4] then
@@ -440,21 +442,14 @@ end
 
 local customGPU={}
 if not newterm then
-	customGPU.gpu = {
+	customGPU.gpu = setmetatable({
 		set = function(x,y,s,v) return gpu.set(x+customGPU.x-1,y+customGPU.y-1,s,v ~= nil and v) end,
 		get = function(x,y) return gpu.get(x+customGPU.x-1,y+customGPU.y-1) end,
 		getResolution = function() return customGPU.width, customGPU.height end,
 		copy = function(x,y,w,h,tx,ty) if ty ~= -1 then return gpu.copy(x+customGPU.x-1,y+customGPU.y-1,w,h,tx,ty) end end,
 		fill = function(x,y,w,h,c) return gpu.fill(x+customGPU.x-1,y+customGPU.y-1,w,h,c) end,
-	}
+	},{__index = gpu})
 end
-setmetatable(customGPU.gpu,{
-	__index = function(_,k)
-		if gpu[k] ~= nil then
-			return gpu[k]
-		end
-	end
-})
 function customGPU:gpuSetup(x,y,width,height)
 	if self.window then
 		self.window.dx=x-1
@@ -954,11 +949,15 @@ local function handleCommand(block, prefix, command, args, message)
 				helper.write(sock, "NOTICE " .. name(prefix) .. " :\001PING " .. param .. "\001")
 			end
 		else
-			if message:find(nick, nil, true) then
-				computer.beep()
-			end
 			local cblock = helper.findOrJoinChannel(block,channel)
-			helper.addTextToBlock(cblock, name(prefix), message)
+			if message:find(nick, nil, true) then
+				if config.wocchat.notifysound then
+					computer.beep()
+				end
+				helper.addTextToBlock(cblock, name(prefix), message, theme.actions.highlight.color)
+			else
+				helper.addTextToBlock(cblock, name(prefix), message)
+			end
 		end
 	elseif command == "NOTICE" then
 		local channel = args[1]
@@ -1336,12 +1335,25 @@ local function main()
 	end
 	-- Version upgrade assistant
 	if config.wocchat.version == nil then
+		config.wocchat.version = "v0.0.2"
 		if config.default.realname:sub(-15) == "[OpenComputers]" then
 			config.default.realname = config.default.realname:match("(.*)%[OpenComputers%]") .. "[WocChat]"
 		end
 	end
+	if config.wocchat.version == "v0.0.2" then
+		config.wocchat.version = "v0.0.3"
+
+		config.wocchat.notifysound = true
+		config["base.theme"].actions.highlight = {color = 15}
+		config["base.theme"].tree.entry.prefix.last = "└─"
+		config["base.theme"].tree.entry.prefix.str = "├─"
+	end
 	print("Saving screen ...")
 	saveScreen()
+	if config.wocchat.usetree == nil then
+		config.wocchat.usetree = (screen.width > 80 and screen.height > 25)
+	end
+	gpu.setDepth(gpu.maxDepth())
 	gpu.setForeground(0xFFFFFF)
 	gpu.setBackground(0)
 	gpu.fill(1,1,screen.width,screen.height," ")
@@ -1512,7 +1524,12 @@ local function main()
 					helper.addText("CmdError",err,theme.actions.error.color)
 				end
 			else
-				helper.addText("","No such command: " .. parse[1])
+				local sock = helper.getSocket()
+				if sock == nil then
+					helper.addText("","/" .. parse[1] .. " cannot be performed on this block",theme.actions.error.color)
+				else
+					helper.write(sock, table.concat(parse, " "))
+				end
 			end
 		elseif blocks[blocks.active].type == "channel" then
 			if line:sub(1,2) == "//" then
@@ -1527,7 +1544,7 @@ local function main()
 end
 
 -- Hijack needed for term.read
-local old_getPrimary, old_print
+local old_getPrimary
 if newterm then
 	local w,h,dx,dy,x,y = term.getViewport()
 	local oldwindow = {
@@ -1541,13 +1558,9 @@ if newterm then
 		x=x,
 		y=y
 	}
-	old_print = print
-	function print(msg)
-		term.drawText(msg, true, oldwindow)
-	end
-	
+
 	local window = term.internal.open()
-	term.bind(customGPU.gpu, term.screen(), term.keyboard(), window)
+	term.bind(gpu, term.screen(), term.keyboard(), window)
 	process.info().data.window = window
 	customGPU.window = window
 else
@@ -1564,13 +1577,12 @@ end
 local stat, err = xpcall(main,debug.traceback)
 if newterm then
 	process.info().data.window = nil
-	print = old_print
 else
 	component.getPrimary = old_getPrimary
 end
 for i = 1,#blocks do
 	if blocks[i].sock then
-		pcall(blocks[i].sock.write, blocks[i].sock, "QUIT\r\n")
+		pcall(blocks[i].sock.write, blocks[i].sock, "QUIT :" .. config.default.quit .. "\r\n")
 		pcall(blocks[i].sock.close, blocks[i].sock)
 	end
 end
