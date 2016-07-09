@@ -59,6 +59,11 @@ local function saveScreen()
 	end
 	screen.bg = table.pack(gpu.getBackground())
 	screen.fg = table.pack(gpu.getForeground())
+	if newterm then
+		screen.precise = term.screen().isPrecise()
+	else
+		screen.precise = component.screen.isPrecise()
+	end
 end
 
 local function restoreScreen()
@@ -70,6 +75,11 @@ local function restoreScreen()
 	term.setCursor(1,screen.height)
 	gpu.setBackground(table.unpack(screen.bg))
 	gpu.setForeground(table.unpack(screen.fg))
+	if newterm then
+		term.screen().setPrecise(screen.precise)
+	else
+		component.screen.setPrecise(screen.precise)
+	end
 	term.clear()
 end
 
@@ -1292,6 +1302,7 @@ function commands.nick(...)
 	end
 end
 
+local loadedConfig=false
 local function main()
 	if not fs.exists("/etc/wocchat.cfg") or options["dl-config"] then
 		print("Downloading config ...")
@@ -1323,9 +1334,20 @@ local function main()
 	print("Loading config ...")
 	loadConfig()
 	if config.default.nick == nil then
-		term.write("Enter your default nickname: ")
-		local nick = term.read()
-		config.default.nick = text.trim(nick)
+		while true do
+			term.write("Enter your default nickname: ")
+			local nick = term.read()
+			if nick == nil or nick == "" then
+				return
+			end
+			nick = text.trim(nick)
+			if nick ~= "" then
+				config.default.nick = text.trim(nick)
+				break
+			else
+				print("Invalid nickname.")
+			end
+		end
 	end
 	if config.default.user == nil then
 		config.default.user = config.default.nick:lower()
@@ -1348,6 +1370,7 @@ local function main()
 		config["base.theme"].tree.entry.prefix.last = "└─"
 		config["base.theme"].tree.entry.prefix.str = "├─"
 	end
+	loadedConfig=true
 	print("Saving screen ...")
 	saveScreen()
 	if config.wocchat.usetree == nil then
@@ -1364,7 +1387,13 @@ local function main()
 		gpu.fill(screen.width/2-16,screen.height/2+1,i*2+2,1,"█")
 		i=i+1
 	end
+	if newterm then
+		term.screen().setPrecise(false)
+	else
+		component.screen.setPrecise(false)
+	end
 	term.setCursor(1,1)
+	local scrolldrag=false
 	function persist.mouse(event, addr, x, y, button)
 		local ok,err = pcall(function()
 		if event == "touch" then
@@ -1376,7 +1405,7 @@ local function main()
 					redraw()
 				end
 			else
-				if y == screen.height and x > 1 then
+				if y >= screen.height and x > 1 then
 					local bx = 2
 					for i = 1,#blocks do
 						local block = blocks[i]
@@ -1395,16 +1424,21 @@ local function main()
 					end
 				end
 			end
-			if x == screen.width and y <= (config.wocchat.usetree and screen.height or screen.height - 1) and blocks[blocks.active].names ~= nil then
-				local height = (config.wocchat.usetree and screen.height or screen.height - 1)
-				blocks[blocks.active].scroll = math.floor((y-1)/(height-1)*(#blocks[blocks.active].names-height)+1)
-				dirty.nicks = true
-			end
-		elseif event == "scroll" then
+		end
+		if ((event == "touch" and x >= screen.width) or (event == "drag" and scrolldrag)) and y <= (config.wocchat.usetree and screen.height or screen.height - 1) and blocks[blocks.active].names ~= nil then
+			local height = (config.wocchat.usetree and screen.height or screen.height - 1)
+			blocks[blocks.active].scroll = math.floor((y-1)/(height-1)*(#blocks[blocks.active].names-height)+1)
+			dirty.nicks = true
+			scrolldrag = true
+		end
+		if event == "scroll" then
 			if x > screen.width-persist.listwidth and y <= screen.height+(config.wocchat.usetree and 0 or 1) then
 				blocks[blocks.active].scroll = blocks[blocks.active].scroll - button
 				dirty.nicks = true
 			end
+		end
+		if event == "drop" then
+			scrolldrag = false
 		end
 		end)
 		if not ok then
@@ -1412,6 +1446,8 @@ local function main()
 		end
 	end
 	event.listen("touch",persist.mouse)
+	event.listen("drag",persist.mouse)
+	event.listen("drop",persist.mouse)
 	event.listen("scroll",persist.mouse)
 	persist.timer = event.timer(0.5, function()
 		for i = 1,#blocks do
@@ -1511,9 +1547,10 @@ local function main()
 			end
 			return list
 		end)
-		if line ~= nil then line = text.trim(line) end
+		if line ~= nil then line = line:gsub("[\r\n]","") end
 		if line == "/exit" then break end
-		if line:sub(1,1) == "/" and line:sub(1,2) ~= "//" then
+		if line == "" then
+		elseif line:sub(1,1) == "/" and line:sub(1,2) ~= "//" then
 			local parse = {}
 			for part in (line:sub(2) .. " "):gmatch("(.-) ") do
 				parse[#parse+1] = part
@@ -1560,6 +1597,8 @@ if newterm then
 	}
 
 	local window = term.internal.open()
+	window.x=x
+	window.y=y
 	term.bind(gpu, term.screen(), term.keyboard(), window)
 	process.info().data.window = window
 	customGPU.window = window
@@ -1588,6 +1627,8 @@ for i = 1,#blocks do
 end
 if persist.mouse then
 	event.ignore("touch",persist.mouse)
+	event.ignore("drag",persist.mouse)
+	event.ignore("drop",persist.mouse)
 	event.ignore("scroll",persist.mouse)
 end
 if persist.timer then
@@ -1596,10 +1637,14 @@ end
 if screen then
 	restoreScreen()
 end
-print("Saving config ...")
-local sok,srr = saveConfig()
-if not sok then
-	errprint("Failed to save config: " .. srr)
+if loadedConfig then
+	print("Saving config ...")
+	local sok,srr = saveConfig()
+	if not sok then
+		errprint("Failed to save config: " .. srr)
+	end
+else
+	print("Failed to load configuration, skipping save.")
 end
 if not stat then
 	errprint(err)
