@@ -1,11 +1,12 @@
+-- A ComputerCraft emulator for OpenComputers
+-- Because we could.
+
 local shell = require("shell")
 local term = require("term")
-local text = require("text")
 local fs = require("filesystem")
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
-local process = require("process")
 local sides = require("sides")
 local unicode = require("unicode")
 
@@ -21,6 +22,7 @@ local vconfig = {
 	"enable-debug",
 	"enable-native-io",
 	"enable-unicode",
+	"enable-lua51",
 }
 for i = 1, #vconfig do
 	vconfig[vconfig[i]]=true
@@ -33,6 +35,7 @@ local config = {
 	["enable-debug"] = false,
 	["enable-native-io"] = true,
 	["enable-unicode"] = false,
+	["enable-lua51"] = true,
 }
 
 if fs.exists("/etc/ccemu.cfg") then
@@ -83,6 +86,7 @@ local usageStr = [[Usage: ccemu (options) (program) (arguments)
  --apipath=path  Load certain apis in folder
  --ccpal         Load CC's palette
  --native-io     Use OC's io api
+ --nolua51       Disable lua 5.1 compatibility
  --noshell       Disable built in shell api
  --unicode       Experimentally support unicode
  --debug         Enable debugging]]
@@ -482,13 +486,12 @@ _wrap = {
 }
 
 env = {
-	_VERSION = "Luaj-jse 2.0.3",
+	_VERSION = (config["enable-lua51"] and "Lua 5.1" or _VERSION),
+	_HOST = "ComputerCraft 1.79 (Minecraft 1.8.9)",
+	_CC_DEFAULT_SETTINGS = "",
 	__inext = ipairs({}),
 	tostring = tostring,
 	tonumber = tonumber,
-	unpack = table.unpack,
-	getfenv = _wrap.getfenv,
-	setfenv = _wrap.setfenv,
 	rawequal = rawequal,
 	rawset = rawset,
 	rawget = rawget,
@@ -503,7 +506,7 @@ env = {
 	pairs = pairs,
 	pcall = pcall,
 	xpcall = xpcall,
-	loadstring = _wrap.loadstring,
+	load = load,
 	math = math,
 	string = string,
 	table = table,
@@ -566,7 +569,15 @@ env = {
 		getMethods = function(side) checkArg(1, side, "string") end,
 		call = function(side, method) checkArg(1, side, "string") checkArg(2, method, "string") error("no peripheral attached", 2) end,
 	},
-	bit = {
+}
+env._G = env
+
+if config["enable-lua51"] then
+	env.getfenv = _wrap.getfenv
+	env.setfenv = _wrap.setfenv
+	env.unpack = table.unpack
+	env.loadstring = _wrap.loadstring
+	env.bit = {
 		blshift = bit32.lshift,
 		brshift = bit32.arshift,
 		blogic_rshift = bit32.rshift,
@@ -575,9 +586,8 @@ env = {
 		band = bit32.band,
 		bnot = bit32.bnot,
 	}
-}
+end
 
-env._G = env
 if config["enable-unicode"] then
 	env.string = tablecopy(string)
 	env.string.reverse = unicode.reverse
@@ -703,114 +713,11 @@ env.redstone.getAnalogueOutput = env.redstone.getAnalogOutput
 env.redstone.setAnalogueOutput = env.redstone.setAnalogOutput
 env.rs = env.redstone
 
--- Bios entries:
-function env.os.version()
-	return "CCEmu 1.0"
-end
-function env.os.pullEventRaw(filter)
-	return coroutine.yield(filter)
-end
-function env.os.pullEvent(filter)
-	local e = table.pack(env.os.pullEventRaw(filter))
-	if e[1] == "terminate" then
-		error("interrupted", 0)
-	end
-	return table.unpack(e)
-end
-env.sleep = os.sleep
-env.write = function(data)
-	local count = 0
-	local otw = text.wrap
-	function text.wrap(...)
-		local a, b, c = otw(...)
-		if c then count = count + 1 end
-		return a, b, c
-	end
-	local x = term.getCursor()
-	local w = component.gpu.getResolution()
-	term.write(data, unicode.len(data) + x - 1 > w)
-	text.wrap = otw
-	return count
-end
-env.print = function(...)
-	local args = {...}
-	for i = 1, #args do
-		args[i] = tostring(args[i])
-	end
-	return env.write(table.concat(args, "\t") .. "\n")
-end
-env.printError = function(...) io.stderr:write(table.concat({...}, "\t") .. "\n") end
-env.read = function(pwchar, hist)
-	local line = term.read(tablecopy(hist), nil, nil, pwchar)
-	if line == nil then
-		return ""
-	end
-	return line:gsub("\n", "")
-end
-env.loadfile = loadfile
-env.dofile = dofile
-env.os.run = function(newenv, name, ...)
-	local args = {...}
-	setmetatable(newenv, {__index=env})
-	local fn, err = loadfile(name, nil, newenv)
-	if fn then
-		local ok, err = pcall(function() fn(table.unpack(args)) end)
-		if not ok then
-			if err and err ~= "" then
-				env.printError(err)
-			end
-			return false
-		end
-		return true
-	end
-	if err and err ~= "" then
-		env.printError(err)
-	end
-	return false
-end
-
-local tAPIsLoading = {}
-env.os.loadAPI = function(path)
-	local sName = fs.name(path)
-	if tAPIsLoading[sName] == true then
-		env.printError("API " .. sName .. " is already being loaded")
-		return false
-	end
-	tAPIsLoading[sName] = true
-
-	local env2
-	env2 = {
-		getfenv = function() return env2 end
-	}
-	setmetatable(env2, {__index = env})
-	local fn, err = loadfile(path, nil, env2)
-	if fn then
-		fn()
-	else
-		env.printError(err)
-		tAPIsLoading[sName] = nil
-		return false
-	end
-
-	local tmpcopy = {}
-	for k, v in pairs(env2) do
-		tmpcopy[k] = v
-	end
-
-	env[sName] = tmpcopy
-	tAPIsLoading[sName] = nil
-	return true
-end
-env.os.unloadAPI = function(name)
-	if _name ~= "_G" and type(env[name]) == "table" then
-		env[name] = nil
-	end
-end
-env.os.sleep = os.sleep
-if env.http ~= nil then
-	-- TODO: http.get
-	-- TODO: http.post
-end
+_G.ccemu = {
+	env = env,
+	config = config,
+}
+dofile(package.searchpath("ccbios", package.path))
 
 local apiblacklist = {
 	colours = true,
@@ -843,6 +750,22 @@ if env.colors ~= nil then
 		if k == "lightGray" then k = "lightGrey" end
 		env.colours[k] = v
 	end
+end
+
+-- Set default settings
+env.settings.set("shell.allow_startup", true)
+env.settings.set("shell.allow_disk_startup", true)
+env.settings.set("shell.autocomplete", true)
+env.settings.set("edit.autocomplete", true)
+env.settings.set("lua.autocomplete", true)
+env.settings.set("list.show_hidden", false)
+if env.term.isColour() then
+    env.settings.set("bios.use_multishell", true)
+end
+
+-- Load user settings
+if fs.exists( ".settings" ) then
+    settings.load( ".settings" )
 end
 
 local function getEvent()
