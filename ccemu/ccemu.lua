@@ -511,6 +511,7 @@ env = {
 	string = string,
 	table = table,
 	coroutine = coroutine,
+	bit32 = bit32,
 	term = {
 		clear = function() local x, y = term.getCursor() term.clear() term.setCursor(x, y) end,
 		clearLine = function() local x, y = term.getCursor() term.clearLine() term.setCursor(x, y) end,
