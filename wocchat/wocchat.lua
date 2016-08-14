@@ -60,7 +60,7 @@ local function saveScreen()
 	screen.bg = table.pack(gpu.getBackground())
 	screen.fg = table.pack(gpu.getForeground())
 	if newterm then
-		screen.precise = term.screen().isPrecise()
+		screen.precise = component.proxy(term.screen()).isPrecise()
 	else
 		screen.precise = component.screen.isPrecise()
 	end
@@ -76,7 +76,7 @@ local function restoreScreen()
 	gpu.setBackground(table.unpack(screen.bg))
 	gpu.setForeground(table.unpack(screen.fg))
 	if newterm then
-		term.screen().setPrecise(screen.precise)
+		component.proxy(term.screen()).setPrecise(screen.precise)
 	else
 		component.screen.setPrecise(screen.precise)
 	end
@@ -1388,7 +1388,7 @@ local function main()
 		i=i+1
 	end
 	if newterm then
-		term.screen().setPrecise(false)
+		component.proxy(term.screen()).setPrecise(false)
 	else
 		component.screen.setPrecise(false)
 	end
@@ -1584,22 +1584,11 @@ end
 local old_getPrimary
 if newterm then
 	local w,h,dx,dy,x,y = term.getViewport()
-	local oldwindow = {
-		gpu=term.gpu(),
-		screen=term.screen(),
-		keyboard=term.keyboard(),
-		w=w,
-		h=h,
-		dx=dx,
-		dy=dy,
-		x=x,
-		y=y
-	}
-
+	local oldwindow = process.info().data.window
 	local window = term.internal.open()
 	window.x=x
 	window.y=y
-	term.bind(gpu, term.screen(), term.keyboard(), window)
+	term.bind(gpu, window)
 	process.info().data.window = window
 	customGPU.window = window
 else
