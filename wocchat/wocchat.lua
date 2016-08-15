@@ -30,6 +30,8 @@ local text = require("text")
 local unicode = require("unicode")
 local process = require("process")
 
+local unicodeBlacklist = unicode.char(0x200B,0xFEFF)
+
 local args, options = shell.parse(...)
 
 local config,blocks,persist = {},{{type="main",name="WocChat",text={{"*","Welcome to WocChat!"}}},active=1},{}
@@ -369,7 +371,7 @@ local function drawWindow(x,width,height,irctext)
 	local buffer = {}
 	for i = 1,#irctext do
 		local first = true
-		local line = irctext[i][2]:gsub("[\2\29\31]",""):gsub("\15+","\15")
+		local line = irctext[i][2]:gsub("[\2\29\31" .. unicodeBlacklist .. "]",""):gsub("\15+","\15")
 		if not config.wocchat.showcolors or gpu.getDepth() < 8 then
 			line = table.concat(colorChunker(line,true),"")
 		end
