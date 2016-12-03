@@ -16,6 +16,7 @@ local nanoVERSION = "1.0.0"
 
 local function printf(...) print(string.format(...)) end
 local function eprintf(...) io.stderr:write(string.format(...) .. "\n") end
+local event_pull = term.pull or event.pull
 -- Fix keys.none
 keys["none"] = 0
 keys[0] = "none"
@@ -187,7 +188,7 @@ local function parseRC(filename)
 	if problem then
 		print("Press Enter to continue starting nano.")
 		while true do
-			local name,_,_,code = event.pull()
+			local name,_,_,code = event_pull()
 			if name == "key_down" and code == keys.enter then break end
 		end
 	end
@@ -441,7 +442,7 @@ function binding.exit()
 		gpu.setBackground(options.fgcolor)
 		statusPrompt("Save modified buffer (ANSWERING \"No\" WILL DESTROY CHANGES) ? ")
 		while true do
-			local e,_,c = event.pull()
+			local e,_,c = event_pull()
 			if e == "key_down" then
 				c = unicode.lower(unicode.char(c))
 				local ctrl = kbd.isControlDown()
@@ -470,7 +471,7 @@ function binding.exit()
 						-- TODO: Again, MYESNO mode
 						statusPrompt("File exists, OVERWRITE ? ")
 						while true do
-							local e,_,c = event.pull()
+							local e,_,c = event_pull()
 							c = unicode.lower(unicode.char(c))
 							if e == "key_down" then
 								local ctrl = kbd.isControlDown()
@@ -694,7 +695,7 @@ end
 switchBuffers(1)
 
 while running do
-	local e = { event.pull() }
+	local e = { event_pull() }
 	if e[1] == "key_down" then
 		local char, code = e[3], e[4]
 		local ctrl = kbd.isControlDown()
