@@ -1,37 +1,15 @@
+-- Configuration
+local totalspace = math.huge
+local curspace = 0
+local port = 14948
+local label = "netfs"
+local change = false
+local debug = false
+-- End of Configuration
+
 local socket = require("socket")
 
-local server, curclient, totalspace, curspace, port, label, change, debug, recurseCount
-local sockets, hndls = {}, {}
-
--- Configuration
-totalspace = math.huge
-curspace = 0
-port = 14948
-label = "netfs"
-change = false
-debug = false
-
-function love.load(arg)
-	if change then
-		print("Modification enabled\n")
-	end
-	
-	print("Calculating current space usage ...")
-	curspace = recurseCount("/")
-
-	local stat
-	stat, server = pcall(assert,socket.bind("*", port))
-	if not stat then
-		print("Failed to get default port " .. port .. ": " .. server)
-		server = assert(socket.bind("*", 0))
-	end
-	local sID, sPort = server:getsockname()
-	server:settimeout(0)
-	sockets[1] = server
-
-	print("Listening on " .. sID .. ":" .. sPort)
-end
-
+local recurseCount
 function recurseCount(path)
 	local count = 0
 	local list = love.filesystem.getDirectoryItems(path)
@@ -58,6 +36,24 @@ function recursiveDestroy(path)
 	end
 	return state
 end
+
+
+if change then
+	print("Modification enabled\n")
+end
+
+print("Calculating current space usage ...")
+curspace = recurseCount("/")
+
+local stat, server = pcall(assert,socket.bind("*", port))
+if not stat then
+	print("Failed to get default port " .. port .. ": " .. server)
+	server = assert(socket.bind("*", 0))
+end
+local sID, sPort = server:getsockname()
+server:settimeout(0)
+
+print("Listening on " .. sID .. ":" .. sPort)
 
 local ots = tostring
 function tostring(obj)
@@ -124,6 +120,7 @@ function unserialize(str)
 	end
 end
 
+local curclient
 local function sendData(msg)
 	if debug then
 		local ip,port = curclient:getpeername()
@@ -140,12 +137,25 @@ local function checkArg(pos,obj,what)
 	return true
 end
 
+local function dprint(ctrl, line)
+	print(" > " .. ctrl .. "," .. line:gsub("[^\32-\126]", function(a) return "\\"..a:byte() end))
+end
+
+-- do not change order
+local ops={"size","seek","read","isDirectory","open","spaceTotal","setLabel","lastModified","close","rename","isReadOnly","exists","getLabel","spaceUsed","makeDirectory","list","write","remove"}
+
+local sockets = {server}
+local hndls = {}
 function love.update()
 	-- Check for new data or new clients
-	local ready = socket.select(sockets,nil) or {}
-	for _,client in ipairs(ready) do
+	local ready, _, err = socket.select(sockets,nil)
+	if not ready then
+		print("select gave " .. tostring(err))
+		return
+	end
+	for _, client in ipairs(ready) do
 		if client == server then
-			local client = server:accept()
+			client = server:accept()
 			if client ~= nil then
 				local ci,cp = client:getpeername()
 				print("User connected from: " .. ci .. ":" .. cp)
@@ -167,16 +177,18 @@ function love.update()
 					break
 				end
 			end
-			return
+			break
 		end
 		local ctrl = line:byte(1,1) - 31
+		ctrl = ops[ctrl] or ctrl
+		local line = line:sub(2)
 		if debug then
-			print(" > " .. ctrl .. "," .. line:sub(2))
+			dprint(ctrl, line)
 		end
-		local stat,ret = pcall(unserialize,line:sub(2))
+		local stat,ret = pcall(unserialize, line)
 		if not stat then
 			if not debug then
-				print(" > " .. ctrl .. "," .. line:sub(2))
+				dprint(ctrl, line)
 			end
 			print("Bad Input: " .. ret)
 			sendData("{nil,\"bad input\"}")
@@ -184,17 +196,17 @@ function love.update()
 		end
 		if type(ret) ~= "table" then
 			if not debug then
-				print(" > " .. ctrl .. "," .. line:sub(2))
+				dprint(ctrl, line)
 			end
 			print("Bad Input (exec): " .. type(ret))
 			sendData("{nil,\"bad input\"}")
 			return
 		end
-		if ctrl == 1 then -- size
+		if ctrl == "size" then
 			if not checkArg(1,ret[1],"string") then return end
 			local size = love.filesystem.getSize(ret[1])
 			sendData("{" .. (size or 0) .. "}")
-		elseif ctrl == 2 then -- seek
+		elseif ctrl == "seek" then
 			if not checkArg(1,ret[1],"number") then return end
 			if not checkArg(2,ret[2],"string") then return end
 			if not checkArg(3,ret[3],"number") then return end
@@ -211,7 +223,7 @@ function love.update()
 				end
 				sendData("{" .. hndls[fd]:tell() .. "}")
 			end
-		elseif ctrl == 3 then -- read
+		elseif ctrl == "read" then
 			if not checkArg(1,ret[1],"number") then return end
 			if not checkArg(2,ret[2],"number") then return end
 			local fd = ret[1]
@@ -225,10 +237,10 @@ function love.update()
 					sendData("{nil}")
 				end
 			end
-		elseif ctrl == 4 then -- isDirectory
+		elseif ctrl == "isDirectory" then
 			if not checkArg(1,ret[1],"string") then return end
 			sendData("{" .. tostring(love.filesystem.isDirectory(ret[1])) .. "}")
-		elseif ctrl == 5 then -- open
+		elseif ctrl == "open" then
 			if not checkArg(1,ret[1],"string") then return end
 			if not checkArg(2,ret[2],"string") then return end
 			local mode = ret[2]:sub(1,1)
@@ -250,9 +262,9 @@ function love.update()
 					sendData("{" .. randhand .. "}")
 				end
 			end
-		elseif ctrl == 6 then -- spaceTotal
+		elseif ctrl == "spaceTotal" then
 			sendData("{" .. tostring(totalspace) .. "}")
-		elseif ctrl == 7 then -- setLabel
+		elseif ctrl == "setLabel" then
 			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				label = ret[1]
@@ -260,11 +272,11 @@ function love.update()
 			else
 				sendData("label is read only")
 			end
-		elseif ctrl == 8 then -- lastModified
+		elseif ctrl == "lastModified" then
 			if not checkArg(1,ret[1],"string") then return end
 			local modtime = love.filesystem.getLastModified(ret[1])
 			sendData("{" .. (modtime or 0) .. "}")
-		elseif ctrl == 9 then -- close
+		elseif ctrl == "close" then
 			if not checkArg(1,ret[1],"number") then return end
 			local fd = ret[1]
 			if hndls[fd] == nil then
@@ -274,7 +286,7 @@ function love.update()
 				hndls[fd] = nil
 				sendData("{}")
 			end
-		elseif ctrl == 10 then -- rename
+		elseif ctrl == "rename" then
 			if not checkArg(1,ret[1],"string") then return end
 			if not checkArg(2,ret[2],"string") then return end
 			if change then
@@ -301,24 +313,24 @@ function love.update()
 			else
 				sendData("{false}")
 			end
-		elseif ctrl == 11 then -- isReadOnly
+		elseif ctrl == "isReadOnly" then
 			sendData("{" .. tostring(not change) .. "}")
-		elseif ctrl == 12 then -- exists
+		elseif ctrl == "exists" then
 			if not checkArg(1,ret[1],"string") then return end
 			sendData("{" .. tostring(love.filesystem.exists(ret[1])) .. "}")
-		elseif ctrl == 13 then -- getLabel
+		elseif ctrl == "getLabel" then
 			sendData("{\"" .. label .. "\"}")
-		elseif ctrl == 14 then -- spaceUsed
+		elseif ctrl == "spaceUsed" then
 			-- TODO: Need to update this
 			sendData("{" .. curspace .. "}")
-		elseif ctrl == 15 then -- makeDirectory
+		elseif ctrl == "makeDirectory" then
 			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				sendData("{" .. tostring(love.filesystem.createDirectory(ret[1])) .. "}")
 			else
 				sendData("{false}")
 			end
-		elseif ctrl == 16 then -- list
+		elseif ctrl == "list" then
 			if not checkArg(1,ret[1],"string") then return end
 			local list = love.filesystem.getDirectoryItems(ret[1])
 			local out = ""
@@ -332,7 +344,7 @@ function love.update()
 				end
 			end
 			sendData("{{" .. out .. "}}")
-		elseif ctrl == 17 then -- write
+		elseif ctrl == "write" then
 			if not checkArg(1,ret[1],"number") then return end
 			if not checkArg(2,ret[2],"string") then return end
 			local fd = ret[1]
@@ -342,7 +354,7 @@ function love.update()
 				local success = hndls[fd]:write(ret[2])
 				sendData("{" .. tostring(success) .. "}")
 			end
-		elseif ctrl == 18 then -- remove
+		elseif ctrl == "remove" then
 			if not checkArg(1,ret[1],"string") then return end
 			if change then
 				sendData("{" .. tostring(recursiveDestroy(ret[1])) .. "}")
