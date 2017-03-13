@@ -1,7 +1,7 @@
 -- Warning, given a bug in this program, the client could potentially access files outside the folder
 -- Best to chroot/limit permissions for this server
 local server, curclient, totalspace, curspace, port, label, change, debug, recurseCount
-local clients, hndls, servert = {}, {}, {}
+local sockets, hndls = {}, {}
 
 -- Configuration
 totalspace = math.huge
@@ -86,7 +86,7 @@ if not stat then
 end
 local sID, sPort = server:getsockname()
 server:settimeout(0)
-servert[1] = server
+sockets[1] = server
 
 print("Listening on " .. sID .. ":" .. sPort)
 
@@ -172,20 +172,19 @@ local function checkArg(pos,obj,what)
 end
 
 local function update()
-	-- Check for new clients
-	local test = socket.select(servert,nil,0)
-	if test and test[server] then
-		local client = server:accept()
-		if client ~= nil then
-			local ci,cp = client:getpeername()
-			print("User connected from: " .. ci .. ":" .. cp)
-			clients[#clients + 1] = client
-			client:settimeout(0)
+	-- Check for new data or new clients
+	local ready, err, err2 = socket.select(sockets,nil) or {}
+	for _, client in ipairs(ready) do
+		if client == server then
+			client = server:accept()
+			if client ~= nil then
+				local ci,cp = client:getpeername()
+				print("User connected from: " .. ci .. ":" .. cp)
+				sockets[#sockets + 1] = client
+				client:settimeout(0)
+			end
+			break
 		end
-	end
-	-- Check for new data
-	local ready = socket.select(clients,nil,0) or {}
-	for _,client in ipairs(ready) do
 		curclient = client
 		local line, err = client:receive()
 		if not line then
@@ -193,9 +192,9 @@ local function update()
 			if err ~= "closed" then
 				pcall(client.close,client)
 			end
-			for i = 1,#clients do
-				if clients[i] == client then
-					table.remove(clients, i)
+			for i = 1,#sockets do
+				if sockets[i] == client then
+					table.remove(sockets, i)
 					break
 				end
 			end
