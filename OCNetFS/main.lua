@@ -1,7 +1,7 @@
 local socket = require("socket")
 
 local server, curclient, totalspace, curspace, port, label, change, debug, recurseCount
-local clients, hndls, servert = {}, {}, {}
+local sockets, hndls = {}, {}
 
 -- Configuration
 totalspace = math.huge
@@ -27,7 +27,7 @@ function love.load(arg)
 	end
 	local sID, sPort = server:getsockname()
 	server:settimeout(0)
-	servert[1] = server
+	sockets[1] = server
 
 	print("Listening on " .. sID .. ":" .. sPort)
 end
@@ -141,20 +141,19 @@ local function checkArg(pos,obj,what)
 end
 
 function love.update()
-	-- Check for new clients
-	local test = socket.select(servert,nil,0)
-	if test and test[server] then
-		local client = server:accept()
-		if client ~= nil then
-			local ci,cp = client:getpeername()
-			print("User connected from: " .. ci .. ":" .. cp)
-			clients[#clients + 1] = client
-			client:settimeout(0)
-		end
-	end
-	-- Check for new data
-	local ready = socket.select(clients,nil,0) or {}
+	-- Check for new data or new clients
+	local ready = socket.select(sockets,nil) or {}
 	for _,client in ipairs(ready) do
+		if client == server then
+			local client = server:accept()
+			if client ~= nil then
+				local ci,cp = client:getpeername()
+				print("User connected from: " .. ci .. ":" .. cp)
+				sockets[#sockets + 1] = client
+				client:settimeout(0)
+			end
+			break
+		end
 		curclient = client
 		local line, err = client:receive()
 		if not line then
@@ -162,9 +161,9 @@ function love.update()
 			if err ~= "closed" then
 				pcall(client.close,client)
 			end
-			for i = 1,#clients do
-				if clients[i] == client then
-					table.remove(clients, i)
+			for i = 1,#sockets do
+				if sockets[i] == client then
+					table.remove(sockets, i)
 					break
 				end
 			end
