@@ -10,9 +10,12 @@ end
 
 local shell = require("shell")
 local args,opts = shell.parse(...)
-if #args < 2 then
-	print("Usage: ocnetfs ip port")
+if #args < 1 or #args > 2 then
+	print("Usage: ocnetfs ip [port]")
 	return
+end
+if #args < 2 then
+	args[2] = "14948"
 end
 
 local ip,port = args[1],tonumber(args[2])
