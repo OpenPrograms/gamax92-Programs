@@ -9,6 +9,12 @@ local blacklist = {
 	["shell"] = true,
 	["package"] = true,
 	["process"] = true,
+	["unicode"] = true,
+	["computer"] = true,
+	["component"] = true,
+	["_G"] = true,
+	["term"] = true,
+	["keyboard"] = true
 }
 
 local function errprint(msg)
