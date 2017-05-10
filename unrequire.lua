@@ -14,11 +14,16 @@ local blacklist = {
 	["component"] = true,
 	["_G"] = true,
 	["term"] = true,
-	["keyboard"] = true,
 	["table"] = true,
 	["string"] = true,
 	["math"] = true,
+	["debug"] = true,
+	["os"] = true,
+	["coroutine"] = true, 
+	["utf8"] = true,
+	["bit32"] = true,
 }
+
 local function errprint(msg)
 	io.stderr:write(msg .. "\n")
 end
