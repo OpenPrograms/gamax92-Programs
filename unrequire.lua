@@ -16,8 +16,9 @@ local blacklist = {
 	["term"] = true,
 	["keyboard"] = true,
 	["table"] = true,
+	["string"] = true,
+	["math"] = true,
 }
-
 local function errprint(msg)
 	io.stderr:write(msg .. "\n")
 end
