@@ -14,7 +14,8 @@ local blacklist = {
 	["component"] = true,
 	["_G"] = true,
 	["term"] = true,
-	["keyboard"] = true
+	["keyboard"] = true,
+	["table"] = true,
 }
 
 local function errprint(msg)
