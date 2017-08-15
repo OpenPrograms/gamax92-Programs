@@ -683,6 +683,56 @@ function helper.findOrJoinChannel(block,channel)
 	cblock.title = "Dialog with " .. channel
 	return cblock
 end
+function helper.closeServer(block)
+	local ablock = blocks[blocks.active]
+	local relocate = false
+	if ablock.parent then
+		if ablock.parent == block then
+			relocate = true -- Active block is a child of the server block
+		end
+	elseif ablock == block then
+		relocate = true -- Active block is the server block
+	end
+	if relocate then
+		-- Find the block before the server block
+		for i = 1,#blocks do
+			if blocks[i] == block then
+				ablock = blocks[i-1]
+				break
+			end
+		end
+	end
+	-- Remove all children blocks
+	for i = 1,#block.children do
+		local cblock = block.children[i]
+		for i = 1,#blocks do
+			if blocks[i] == cblock then
+				table.remove(blocks,i)
+				break
+			end
+		end
+	end
+	-- Remove server block
+	for i = 1,#blocks do
+		if blocks[i] == block then
+			table.remove(blocks,i)
+			break
+		end
+	end
+	-- Relocate active block
+	for i = 1,#blocks do
+		if blocks[i] == ablock then
+			blocks.active = i
+			break
+		end
+	end
+	-- Mark window sections dirty
+	if relocate then
+		helper.markDirty("blocks","window","nicks","title")
+	else
+		dirty.blocks = true
+	end
+end
 function helper.closeChannel(cblock)
 	local block = cblock.parent
 	for i = 1,#block.children do
@@ -1190,21 +1240,17 @@ function commands.part(...)
 		helper.closeChannel(blocks[blocks.active])
 	elseif sock == nil then
 		helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
-	else
-		if #args == 0 then
-			if blocks[blocks.active].type ~= "channel" then
-				helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
-			elseif not (blocks[blocks.active].parent.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
-				helper.closeChannel(blocks[blocks.active])
-			else
-				helper.write(sock, string.format("PART %s", blocks[blocks.active].name))
-			end
+	elseif #args == 0 then
+		if blocks[blocks.active].type == "channel" and (blocks[blocks.active].parent.support.CHANTYPES or default_support.CHANTYPES):find(blocks[blocks.active].name:sub(1,1),nil,true) then
+			helper.write(sock, string.format("PART %s", blocks[blocks.active].name))
 		else
-			for i = 1,#args do
-				sock:write(string.format("PART %s\r\n", args[i]))
-			end
-			sock:flush()
+			helper.addText("","/part cannot be performed on this block",theme.actions.error.color)
 		end
+	else
+		for i = 1,#args do
+			sock:write(string.format("PART %s\r\n", args[i]))
+		end
+		sock:flush()
 	end
 end
 function commands.quit(...)
@@ -1290,6 +1336,19 @@ function commands.clear(...)
 	blocks[blocks.active].text = {}
 	dirty.window = true
 end
+function commands.close(...)
+	local args = {...}
+	local ablock = blocks[blocks.active]
+	if ablock.type == "dead_server" then
+		helper.closeServer(ablock)
+	elseif ablock.type == "dead_channel" then
+		helper.closeChannel(ablock)
+	elseif ablock.type == "channel" and not (ablock.parent.support.CHANTYPES or default_support.CHANTYPES):find(ablock.name:sub(1,1),nil,true) then
+		helper.closeChannel(ablock)
+	else
+		helper.addText("","/close cannot be performed on this block",theme.actions.error.color)
+	end
+end
 function commands.nick(...)
 	local args = {...}
 	if #args == 0 then
@@ -1360,9 +1419,7 @@ local function main()
 	-- Version upgrade assistant
 	if config.wocchat.version == nil then
 		config.wocchat.version = "v0.0.2"
-		if config.default.realname:sub(-15) == "[OpenComputers]" then
-			config.default.realname = config.default.realname:match("(.*)%[OpenComputers%]") .. "[WocChat]"
-		end
+		config.default.realname = config.default.realname:gsub("%[OpenComputers%]$", "[WocChat]")
 	end
 	if config.wocchat.version == "v0.0.2" then
 		config.wocchat.version = "v0.0.3"
