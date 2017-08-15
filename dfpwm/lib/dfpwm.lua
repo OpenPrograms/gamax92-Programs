@@ -1,3 +1,11 @@
+local function reset(state)
+	state.response=0
+	state.level=0
+	state.lastbit=false
+	state.flastlevel=0
+	state.lpflevel=0
+end
+
 local function ctx_update(state, curbit)
 	local target=(curbit and 127 or -128)
 	local nlevel=state.level+math.floor((state.response*(target-state.level)+state.RESP_PREC_HALF)/state.RESP_PREC_POWER)
@@ -78,11 +86,7 @@ local dfpwm={}
 function dfpwm.new(newdfpwm)
 	local state={
 		new=newdfpwm,
-		response=0,
-		level=0,
-		lastbit=false,
-		flastlevel=0,
-		lpflevel=0,
+		reset=reset,
 		decompress=decompress,
 		compress=compress
 	}
@@ -97,6 +101,7 @@ function dfpwm.new(newdfpwm)
 		state.RESP_PREC=8
 		state.LPF_STRENGTH=100
 	end
+	state:reset()
 	-- precompute and cache some stuff
 	state.RESP_PREC_HALF=bit32.lshift(1, state.RESP_PREC-1)
 	state.RESP_PREC_POWER=2^state.RESP_PREC
