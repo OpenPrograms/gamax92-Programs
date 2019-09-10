@@ -23,13 +23,13 @@ function component.list(filter, exact)
 	for k,v in olist(filter, exact) do
 		data[#data + 1] = k
 		data[#data + 1] = v
-		result[k]=v
+		result[k] = v
 	end
 	for k,v in pairs(typelist) do
 		if filter == nil or (exact and v == filter) or (not exact and v:find(filter, nil, true)) then
 			data[#data + 1] = k
 			data[#data + 1] = v
-			result[k]=v
+			result[k] = v
 		end
 	end
 	local place = 1
@@ -37,7 +37,7 @@ function component.list(filter, exact)
 		{__call=function()
 			local addr,type = data[place], data[place + 1]
 			place = place + 2
-			return addr,type
+			return addr, type
 		end}
 	)
 end
