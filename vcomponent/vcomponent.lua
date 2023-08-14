@@ -6,6 +6,16 @@ local proxyobjs = {}
 local typelist = {}
 local doclist = {}
 
+local oavailable = component.isAvailable
+function component.isAvailable(componentType)
+	for k, v in pairs(typelist) do
+		if v == componentType then
+			return true
+		end
+	end
+	return oavailable(componentType)
+end
+
 local oproxy = component.proxy
 function component.proxy(address)
 	checkArg(1,address,"string")
