@@ -6,14 +6,15 @@ local proxyobjs = {}
 local typelist = {}
 local doclist = {}
 
-local oavailable = component.isAvailable
+local oisAvailable = component.isAvailable
 function component.isAvailable(componentType)
+	checkArg(1,componentType,"string")
 	for k, v in pairs(typelist) do
 		if v == componentType then
 			return true
 		end
 	end
-	return oavailable(componentType)
+	return oisAvailable(componentType)
 end
 
 local oproxy = component.proxy
